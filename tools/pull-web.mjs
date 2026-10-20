@@ -32,6 +32,17 @@ const walk = dir => {
 };
 for (const d of DIRS) walk(d);
 
+// AI（transformers.js）と計算の部品（ONNX Runtime の wasm と mjs）。外の配信元から作業場で読むと iPhone アプリでは断られた
+// （2026-10-21「no available backend found. ERR: [wasm] TypeError: Importing a module script failed.」）ので、アプリの中に入れる。
+// .mjs は Capacitor が JS として配らないおそれがあるので、.js の名前で置く（読み込み先の決まりで指す。build-www.mjs）
+const TF = 'node_modules/@huggingface/transformers/dist';
+const vendor = join(here, 'vendor', 'transformers');
+rmSync(vendor, { recursive: true, force: true });
+mkdirSync(vendor, { recursive: true });
+for (const [from, to] of [['transformers.js', 'transformers.js'], ['ort-wasm-simd-threaded.jsep.mjs', 'ort-wasm-simd-threaded.jsep.js'], ['ort-wasm-simd-threaded.jsep.wasm', 'ort-wasm-simd-threaded.jsep.wasm']]) {
+  copyFileSync(join(src, TF, from), join(vendor, to));
+}
+
 const commit = execFileSync('git', ['-C', src, 'log', '-1', '--format=%h %s'], { encoding: 'utf8' }).trim();
 writeFileSync(join(out, 'SOURCE.txt'), `../Lyrivue のコミット ${commit} から写した（${n} ファイル）\n`);
 console.log(`web/ に ${n} ファイルを写しました（${commit}）`);

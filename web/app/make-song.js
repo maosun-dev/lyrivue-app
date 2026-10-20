@@ -52,6 +52,16 @@ async function loadJapaneseOffPage(lyrics, log = () => {}) {
   };
 }
 
+// 計算の部品の場所（import map に ort-wasm/ が無ければ null＝transformers.js の決まりの配信元）
+function ortPaths() {
+  try {
+    return {
+      mjs: import.meta.resolve('ort-wasm/ort-wasm-simd-threaded.jsep.mjs'),
+      wasm: import.meta.resolve('ort-wasm/ort-wasm-simd-threaded.jsep.wasm'),
+    };
+  } catch { return null; }
+}
+
 // AI は画面とは別の作業場（app/whisper-worker.js）で動かす。画面と同じ所で動かすと、聞き終わるまで
 // （曲の長さ〜数倍）ページが止まって固まったように見えるため（2026-10-20 持ち主「くらうどかたまった」）
 function loadTranscriber(onRatio, log = () => {}) {
@@ -108,8 +118,9 @@ function loadTranscriber(onRatio, log = () => {}) {
     worker.postMessage({
       type: 'load',
       libUrl: import.meta.resolve('@huggingface/transformers'),
-      // 計算の部品（wasm）は、手元のサーバーなら手元の写しを使う（公開ページには大きすぎて置けないので、決まりの配信元から読む）
-      wasmPaths: /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) ? here('../node_modules/@huggingface/transformers/dist/') : null,
+      // 計算の部品（ONNX Runtime の wasm と、それを読む mjs）の置き場所。ページの読み込みの決まり（import map）の ort-wasm/ で決める：
+      // 手元のサーバーは node_modules の写し、iPhone アプリは中に入れた写し（外の配信元から作業場で読むと断られた）、公開ページは配信元
+      wasmPaths: ortPaths(),
     });
   });
   transcriberPromise.catch(() => { transcriberPromise = null; });

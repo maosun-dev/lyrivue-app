@@ -15,21 +15,20 @@ const CAP = [
   ['share.js', '@capacitor/share/dist/plugin.js'],
 ];
 
-const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.js';
-
 /** ウェブ版の確認ページの HTML を、アプリの中だけで動く形に直す */
 export function appHtml(html) {
   let h = html
     .replace(/<script>[^<]*location\.protocol === 'file:'[^<]*<\/script>\s*/g, '') // サーバーへ移る・警告を出す部分
     .replace(/<p class="msg err" id="filewarn"[\s\S]*?<\/p>\s*/, '')
     .replace('src="./play-check.js"', 'src="app/play-check.js"')
-    // 外の部品は、アプリの中に入れた写し（vendor/）を読む。
-    // AI（transformers.js）だけは大きいので中に入れず、決まった配信元（jsdelivr）の同じ版を読む（AI のデータも Hugging Face から。iPhone で動くかの試し）
-    .replace(/"@huggingface\/transformers": "[^"]*"/, `"@huggingface/transformers": "${TRANSFORMERS}"`)
+    // 外の部品は、アプリの中に入れた写し（vendor/）を読む。AI（transformers.js）と計算の部品も中から（AI のデータだけは Hugging Face から）。
+    // .mjs は Capacitor が JS として配らないおそれがあるので、.js の名前の写しを指す
+    .replace(/"@huggingface\/transformers": "[^"]*"/, '"@huggingface/transformers": "./vendor/transformers/transformers.js"')
+    .replace(/"ort-wasm\/": "[^"]*"/, '"ort-wasm/": "./vendor/transformers/",\n    "ort-wasm/ort-wasm-simd-threaded.jsep.mjs": "./vendor/transformers/ort-wasm-simd-threaded.jsep.js"')
     .replace('"./shims/kuromoji.js"', '"./app/shims/kuromoji.js"')
     .replace('"../node_modules/kuromoji/build/"', '"./vendor/kuromoji/build/"')
     .replace('"../node_modules/kuromoji/dict/"', '"./vendor/kuromoji/dict/"')
-    .replace('"../node_modules/mp4-muxer/build/mp4-muxer.mjs"', '"./vendor/mp4-muxer.mjs"')
+    .replace('"../node_modules/mp4-muxer/build/mp4-muxer.mjs"', '"./vendor/mp4-muxer.js"')
     // 書体：Google Fonts の代わりに、中に入れた書体（fonts/、tools/fetch-fonts.mjs で作る）
     .replace(/<link rel="preconnect" href="https:\/\/fonts\.googleapis\.com">\s*<link rel="preconnect" href="https:\/\/fonts\.gstatic\.com" crossorigin>\s*<link href="https:\/\/fonts\.googleapis\.com\/css2[^"]+" rel="stylesheet">/, '<link rel="stylesheet" href="fonts/fonts.css">');
   const tags = ['<link rel="stylesheet" href="app/app-native.css">', ...CAP.map(([f]) => `<script src="js/vendor/${f}"></script>`), '<script src="js/app-native.js"></script>'];
@@ -38,7 +37,7 @@ export function appHtml(html) {
   // 書き換えに失敗していないか（外への読み込み・手元の node_modules・file: が残っていたら止める）
   if (/<(script|link)[^>]+(src|href)="https?:\/\//i.test(h)) throw new Error('外部の読み込みが残っています');
   if (/"\.\.\/node_modules|location\.protocol|fonts\.googleapis/.test(h)) throw new Error('書き換えに失敗しました：play-check.html の形が変わっていないか確かめてください');
-  if (!h.includes('src="app/play-check.js"') || !h.includes('"./vendor/mp4-muxer.mjs"') || !h.includes('fonts/fonts.css')) throw new Error('書き換えに失敗しました（読み込み先）');
+  if (!h.includes('src="app/play-check.js"') || !h.includes('"./vendor/mp4-muxer.js"') || !h.includes('"./vendor/transformers/transformers.js"') || !h.includes('fonts/fonts.css')) throw new Error('書き換えに失敗しました（読み込み先）');
   return h;
 }
 
@@ -60,7 +59,8 @@ export function buildWww({ root = here, out = join(here, 'www') } = {}) {
   mkdirSync(join(out, 'vendor/kuromoji/build'), { recursive: true });
   copyFileSync(join(nm, 'kuromoji/build/kuromoji.js'), join(out, 'vendor/kuromoji/build/kuromoji.js'));
   cpSync(join(nm, 'kuromoji/dict'), join(out, 'vendor/kuromoji/dict'), { recursive: true });
-  copyFileSync(join(nm, 'mp4-muxer/build/mp4-muxer.mjs'), join(out, 'vendor/mp4-muxer.mjs'));
+  copyFileSync(join(nm, 'mp4-muxer/build/mp4-muxer.mjs'), join(out, 'vendor/mp4-muxer.js'));
+  cpSync(join(root, 'vendor/transformers'), join(out, 'vendor/transformers'), { recursive: true });
   cpSync(join(root, 'fonts'), join(out, 'fonts'), { recursive: true });
   // Capacitor
   mkdirSync(join(out, 'js/vendor'), { recursive: true });
