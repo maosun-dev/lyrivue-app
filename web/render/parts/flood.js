@@ -1,6 +1,7 @@
 // 歌詞そのもので画面を埋める大げさな組み（render/parts/flood-patterns.js の 52 種）を、行の板の上に描く。
 // 描く係 text-motion が、行の文字より先（後ろ）に drawFlood(…, 'draw')、文字のあと（手前）に drawFlood(…, 'front') を呼ぶ。
 // 座標は行の板の局所座標（行の真ん中が原点）。模様は幅 W・高さ H の四角（カメラが行に寄りきったときの画面くらい）に収める。
+import { steppedFonts } from './font-steps.js';
 import { PATTERNS, CATS } from './flood-patterns.js';
 
 /** 一覧（持ち主が選んだ 52 種）。id は種類をまたいで重ならない */
@@ -50,6 +51,9 @@ function scratchCanvas(name, W, H) {
     else if (globalThis.document?.createElement) { cv = globalThis.document.createElement('canvas'); cv.width = cw; cv.height = ch; }
   } catch { cv = null; }
   if (!cv?.getContext) return null;
+  // 別の画面でも文字の大きさを段に丸める（render/parts/font-steps.js）
+  const get = cv.getContext.bind(cv);
+  cv.getContext = (...args) => steppedFonts(get(...args));
   if (scratches.size > 8) scratches.clear();
   scratches.set(key, cv);
   return cv;
@@ -243,21 +247,23 @@ export function drawFlood(ctx, def, o, which = 'draw') {
   if (!def || !(o?.W > 0) || !(o?.H > 0) || !(fin(o.ga) > 0.003)) return { gap: 0, cy: 0 };
   const W = o.W, H = o.H;
   const glyphs = (o.glyphs ?? []).map(g => ({ ...g, x: g.x + W / 2, y: g.y + H / 2 }));
-  const S = floodTools(ctx, { ...o, glyphs });
+  // 模様は文字の大きさを毎コマ変えて描くので、大きさを段に丸める包みを通す（iPhone で記憶が溜まって落ちたため。font-steps.js）
+  const c = steppedFonts(ctx);
+  const S = floodTools(c, { ...o, glyphs });
   const gap = def.split ? Math.max(0, fin(def.split(S))) : 0;
   if (typeof fn === 'function') {
-    ctx.save();
-    ctx.translate(-W / 2, -H / 2);
-    ctx.beginPath();
-    ctx.rect(0, 0, W, H);
-    ctx.clip();
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'butt';
-    ctx.globalAlpha = S.ga;
-    fn(ctx, S);
-    ctx.restore();
+    c.save();
+    c.translate(-W / 2, -H / 2);
+    c.beginPath();
+    c.rect(0, 0, W, H);
+    c.clip();
+    c.textAlign = 'left';
+    c.textBaseline = 'alphabetic';
+    c.lineJoin = 'round';
+    c.lineCap = 'butt';
+    c.globalAlpha = S.ga;
+    fn(c, S);
+    c.restore();
   }
   return { gap, cy: (S.m.L.top + S.m.L.bottom) / 2 - H / 2 };
 }
