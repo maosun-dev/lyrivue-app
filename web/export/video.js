@@ -3,6 +3,7 @@
 // ・使えないとき：再生しながら録画する（MediaRecorder。曲と同じ時間かかる）
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer'; // 置き場所はページの読み込みの決まり（import map）
 import { frameTime, audioRanges, videoCodecs } from './plan.js';
+import { unwrapAac } from './aac.js';
 
 const AUDIO_RATE = 48000;   // 音はこの細かさにそろえて詰める（Opus はこれでないと詰められない）
 const AUDIO_CHUNK = 4800;   // 一度に渡す音の長さ（0.1 秒）
@@ -89,7 +90,18 @@ export async function encodeVideo({ plan, draw, audio, onProgress, signal }) {
 
   // 音（先に全部詰める。速い）
   if (aconf) {
-    const enc = new AudioEncoder({ output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), error: fail });
+    // AAC は札（AudioSpecificConfig）を確かめてから詰める（iPhone の Safari は札を渡さない・ADTS の頭を付けることがある。export/aac.js）
+    const onAudio = aconf.muxCodec !== 'aac' ? (chunk, meta) => muxer.addAudioChunk(chunk, meta) : (chunk, meta) => {
+      const bytes = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(bytes);
+      const { data, config } = unwrapAac(bytes, AUDIO_RATE, channels);
+      const given = meta?.decoderConfig?.description;
+      const description = data === bytes && given && given.byteLength > 0 ? given : config;
+      const duration = chunk.duration || Math.round(1024 / AUDIO_RATE * 1e6); // AAC は 1 かたまり 1024 個
+      muxer.addAudioChunkRaw(data, chunk.type, chunk.timestamp, duration,
+        { decoderConfig: { codec: 'mp4a.40.2', sampleRate: AUDIO_RATE, numberOfChannels: channels, description } });
+    };
+    const enc = new AudioEncoder({ output: onAudio, error: fail });
     enc.configure(aconf.config);
     const planes = Array.from({ length: channels }, (_, c) => audio.getChannelData(c));
     for (const [a, b] of audioRanges(audio.length, AUDIO_CHUNK)) {
