@@ -14,7 +14,7 @@ import { CAMS, TILTS, SIZES, normalizeEdits, describeEdit } from '../director/ed
 import { cameraAt, project, projectPlane } from '../render/camera.js';
 import { CAM_ICONS, TILT_ICONS, NUDGE_ICONS, ARROW_ICONS } from './edit-icons.js';
 import { makeSong, MAKE_STEPS, isIOS } from './make-song.js';
-import { retimeLines } from '../analyze/retime.js';
+import { retimeLines, tapMoment } from '../analyze/retime.js';
 import { exportPlan, exportFileName, exportMode } from '../export/plan.js';
 import { canEncode, canEncodeAudio, canRecord, encodeVideo, recordVideo, decodeForExport, saveBlob } from '../export/video.js';
 
@@ -227,8 +227,24 @@ function tick() {
     state.cands = [state.sel, ...visibleLines(at).map(c => c.line).filter(x => x !== state.sel)].filter(x => x !== null);
     if (!$('picker').hidden) showPicker();
   }
-  draw();
+  // 画面が見えていない間（タップで合わせるなどでスクロールして隠れている）は MV を描かず、時刻の表示だけ進める。
+  // iPhone では描くのに手いっぱいになり、タップの合図の処理が遅れた（2026-10-20 持ち主の録画）
+  if (stageSeen) draw(); else showClock();
   if (state.playing) state.raf = requestAnimationFrame(tick);
+}
+// 舞台（MV の画面）が画面に見えているか。見えなくなったら描くのを休む（IntersectionObserver が無ければいつも描く）
+let stageSeen = true;
+if (typeof IntersectionObserver === 'function') {
+  new IntersectionObserver(([en]) => {
+    const was = stageSeen;
+    stageSeen = en.isIntersecting;
+    if (stageSeen && !was) draw(); // 見えたら、今の時刻の絵にすぐ追いつく
+  }).observe($('stage'));
+}
+function showClock() {
+  const t = now();
+  $('time').textContent = `${fmt(t)} / ${fmt(duration())}`;
+  if (!state.dragging) $('seek').value = String(t);
 }
 
 function play(keepPicker = false) {
@@ -1426,23 +1442,26 @@ $('tap-start').addEventListener('click', () => {
   $('tap-hit').focus();
 });
 $('tap-from').addEventListener('change', e => tapFrom(Number(e.target.value)));
-function tapHit() {
+function tapHit(e) {
   if (!tap.on || !tapLines()[tap.idx]) return;
-  if (!state.playing) play();
-  tap.taps.push({ line: tap.idx, time: now() });
+  const was = state.playing;
+  if (!was) play();
+  // 押した瞬間の曲の位置（処理が遅れて届いても、合図の時刻まで戻す。analyze/retime.js の tapMoment）
+  const time = was ? tapMoment({ playhead: now(), nowMs: performance.now(), eventMs: e?.timeStamp, prev: tap.taps.at(-1)?.time }) : now();
+  tap.taps.push({ line: tap.idx, time });
   tap.idx++;
   const b = $('tap-hit');
   b.classList.remove('hit'); void b.offsetWidth; b.classList.add('hit'); // 押したことが見えるように、輪を広げる
   showTap();
 }
 // 指を置いた瞬間に数える（離すまで待つと、その分遅れる）
-$('tap-hit').addEventListener('pointerdown', e => { e.preventDefault(); tapHit(); });
-$('tap-hit').addEventListener('keydown', e => { if ((e.key === 'Enter') && !e.repeat) { e.preventDefault(); tapHit(); } });
+$('tap-hit').addEventListener('pointerdown', e => { e.preventDefault(); tapHit(e); });
+$('tap-hit').addEventListener('keydown', e => { if ((e.key === 'Enter') && !e.repeat) { e.preventDefault(); tapHit(e); } });
 document.addEventListener('keydown', e => {
   if (!tap.on || e.key !== ' ' || e.repeat) return;
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '')) return;
   e.preventDefault();
-  tapHit();
+  tapHit(e);
 });
 $('tap-undo').addEventListener('click', () => {
   const last = tap.taps.pop();

@@ -66,3 +66,17 @@ export function retimeLines(result, taps) {
 
 // 小数の誤差（10.9 が 10.899999 になる等）を消す
 const round = v => Math.round(v * 1e6) / 1e6;
+
+const TAP_LAG_MAX = 3; // 戻すのはここまで（秒）。合図の時刻がおかしいときに戻しすぎない
+
+/**
+ * タップした曲の位置。押した瞬間（合図の時刻）まで戻す。
+ * iPhone では MV を描くのに手いっぱいだと、押した合図の処理が遅れて届く（2026-10-20 持ち主の録画：13 行目のまま 6 秒止まり、2 回分がまとめて届いた）
+ * @param {{playhead:number, nowMs:number, eventMs?:number, prev?:number}} o playhead＝処理している今の曲の位置（秒）・nowMs＝今の時刻・eventMs＝合図の時刻（どちらも performance.now と同じ物差しのミリ秒）・prev＝前のタップの位置
+ */
+export function tapMoment({ playhead, nowMs, eventMs, prev }) {
+  const lag = Number.isFinite(eventMs) && Number.isFinite(nowMs) ? Math.min(TAP_LAG_MAX, Math.max(0, (nowMs - eventMs) / 1000)) : 0;
+  let t = Math.max(0, playhead - lag);
+  if (Number.isFinite(prev)) t = Math.max(t, prev);
+  return Math.round(t * 1000) / 1000;
+}

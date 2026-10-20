@@ -43,6 +43,24 @@ export function applyHitCamera(cam, a, t) {
   return cam;
 }
 
+// 裂けの写し先（大きさが同じなら使い回す）。作れない所（試験など）では元の画面そのものを使う
+let snap = null;
+function snapshot(cv) {
+  try {
+    if (!snap) {
+      if (typeof OffscreenCanvas === 'function') snap = new OffscreenCanvas(cv.width, cv.height);
+      else if (globalThis.document?.createElement) snap = globalThis.document.createElement('canvas');
+      else return cv;
+    }
+    if (snap.width !== cv.width) snap.width = cv.width;
+    if (snap.height !== cv.height) snap.height = cv.height;
+    const g = snap.getContext('2d');
+    g.globalCompositeOperation = 'copy';
+    g.drawImage(cv, 0, 0);
+    return snap;
+  } catch { return cv; }
+}
+
 /**
  * 描き終えた絵の上に掛ける効果（白飛び・反転・裂け・黒帯）。size は描く先の大きさ（画素）。
  * 裂けは描いた絵を自分の上にずらして写す（ctx.canvas が使えるときだけ）。
@@ -56,6 +74,9 @@ export function drawHitsPost(ctx, a, size, t) {
     if (cv && cv.width > 0 && cv.height > 0 && typeof cv.getContext === 'function') {
       const kx = cv.width / w, ky = cv.height / h; // 画面の拡大（端末の画素の密度）に合わせて元の絵を切り出す
       const n = 3 + Math.round(5 * Math.min(1, a.slice));
+      // 描いた絵を一度だけ別の画面に写し、そこから切り貼りする。同じ画面から自分へ貼ると、iPhone の描く係は貼るたびに
+      // 画面全体を写し直して 1 回 0.1 秒かかった（2026-10-21 WebKit で計測。タップの合図が遅れて 13→15 行目に飛んだ原因の一つ）
+      const src = snapshot(cv);
       ctx.save();
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
@@ -65,7 +86,7 @@ export function drawHitsPost(ctx, a, size, t) {
         const dx = (hash01(step, i, 13) - 0.5) * 0.25 * w * a.slice;
         const sy = Math.max(0, Math.min(cv.height - 1, y * ky));
         const sh = Math.max(1, Math.min(cv.height - sy, bh * ky));
-        ctx.drawImage(cv, 0, sy, cv.width, sh, dx, sy / ky, w, sh / ky);
+        ctx.drawImage(src, 0, sy, cv.width, sh, dx, sy / ky, w, sh / ky);
       }
       ctx.restore();
     }
