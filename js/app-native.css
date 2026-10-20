@@ -1,7 +1,7 @@
 /* iPhone アプリだけの見た目（ウェブ版には入らない。tools/build-www.mjs が足す） */
 /* 上の時計・電池の帯に重ならないように */
 body { padding-top: env(safe-area-inset-top, 0px); padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px)); }
-/* 作る側の道具・いつもの曲（持ち主の曲）・AI の歌合わせ（iPhone では動かない）は出さない */
-#tools, section:has(#song-set), .row:has(#ns-ai), #ns-ai-hint { display: none !important; }
+/* 作る側の道具・いつもの曲（持ち主の曲）は出さない。AI の切り替えは、iPhone で AI が動くかの試しの間だけ出す */
+#tools, section:has(#song-set) { display: none !important; }
 /* いつもの曲が無いので、新しい曲がいちばん上 */
 .new-song { margin-top: 14px; padding-top: 0; border-top: 0; }

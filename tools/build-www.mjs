@@ -15,14 +15,17 @@ const CAP = [
   ['share.js', '@capacitor/share/dist/plugin.js'],
 ];
 
+const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.js';
+
 /** ウェブ版の確認ページの HTML を、アプリの中だけで動く形に直す */
 export function appHtml(html) {
   let h = html
     .replace(/<script>[^<]*location\.protocol === 'file:'[^<]*<\/script>\s*/g, '') // サーバーへ移る・警告を出す部分
     .replace(/<p class="msg err" id="filewarn"[\s\S]*?<\/p>\s*/, '')
     .replace('src="./play-check.js"', 'src="app/play-check.js"')
-    // 外の部品は、アプリの中に入れた写し（vendor/）を読む。AI（transformers）はアプリでは使わないので外す
-    .replace(/\s*"@huggingface\/transformers": "[^"]*",?/, '')
+    // 外の部品は、アプリの中に入れた写し（vendor/）を読む。
+    // AI（transformers.js）だけは大きいので中に入れず、決まった配信元（jsdelivr）の同じ版を読む（AI のデータも Hugging Face から。iPhone で動くかの試し）
+    .replace(/"@huggingface\/transformers": "[^"]*"/, `"@huggingface/transformers": "${TRANSFORMERS}"`)
     .replace('"./shims/kuromoji.js"', '"./app/shims/kuromoji.js"')
     .replace('"../node_modules/kuromoji/build/"', '"./vendor/kuromoji/build/"')
     .replace('"../node_modules/kuromoji/dict/"', '"./vendor/kuromoji/dict/"')
@@ -34,7 +37,7 @@ export function appHtml(html) {
   h = h.replace('</head>', tags.join('\n') + '\n</head>');
   // 書き換えに失敗していないか（外への読み込み・手元の node_modules・file: が残っていたら止める）
   if (/<(script|link)[^>]+(src|href)="https?:\/\//i.test(h)) throw new Error('外部の読み込みが残っています');
-  if (/"\.\.\/node_modules|"@huggingface\/transformers"|location\.protocol|fonts\.googleapis/.test(h)) throw new Error('書き換えに失敗しました：play-check.html の形が変わっていないか確かめてください');
+  if (/"\.\.\/node_modules|location\.protocol|fonts\.googleapis/.test(h)) throw new Error('書き換えに失敗しました：play-check.html の形が変わっていないか確かめてください');
   if (!h.includes('src="app/play-check.js"') || !h.includes('"./vendor/mp4-muxer.mjs"') || !h.includes('fonts/fonts.css')) throw new Error('書き換えに失敗しました（読み込み先）');
   return h;
 }

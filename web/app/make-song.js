@@ -12,31 +12,8 @@ const here = p => new URL(p, import.meta.url).href;
 /** iPhone・iPad か（Whisper が落ちるので、AI の初期値を「使わない」にする） */
 export const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-// 辞書と AI は一度読めば、ページを開き直すまで使い回す（失敗したら次に押したとき読み直す）
-let japanesePromise = null;
+// AI は一度読めば、ページを開き直すまで使い回す（失敗したら次に押したとき読み直す）
 let transcriberPromise = null;
-
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = src;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error(`読み込めませんでした：${src}`));
-    document.head.appendChild(s);
-  });
-}
-
-function loadJapanese() {
-  japanesePromise ??= (async () => {
-    // kuromoji は CommonJS なので、ふつうの script で読み込んで window.kuromoji にしてから、橋渡し（shims/kuromoji.js）を通す
-    // 置き場所はページの読み込みの決まり（import map）。手元では node_modules、公開ページでは配信元
-    if (!globalThis.kuromoji) await loadScript(import.meta.resolve('kuromoji-build/kuromoji.js'));
-    const { createJapanese } = await import('../analyze/japanese.js');
-    return createJapanese(dictPath());
-  })();
-  japanesePromise.catch(() => { japanesePromise = null; });
-  return japanesePromise;
-}
 
 // 辞書の置き場所：kuromoji は辞書の場所を道のようにつなぐ（// が / になる）ので、同じ置き場所なら道だけを渡す
 function dictPath() {
@@ -44,23 +21,35 @@ function dictPath() {
   return dict.origin === location.origin ? dict.pathname : dict.href;
 }
 
-// AI を使わないとき：辞書は画面とは別の作業場（app/japanese-worker.js）で組み立て、歌詞の切れ端の区切りだけ受け取る。
-// 画面と同じ所で組み立てると、iPhone ではその間ページ全体が止まった（2026-10-20 iPhone 12 mini で「辞書（0 秒）」のまま）。
-// AI の合わせ（toKana に聞き取った言葉を渡す）には使えないので、AI を使うときは今までどおり画面の中で組み立てる
-function loadJapaneseOffPage(lyrics, log = () => {}) {
-  const parts = [...new Set(parseLyrics(lyrics).flatMap(l => japaneseParts(l.text)))];
+// 辞書は画面とは別の作業場（app/japanese-worker.js）で組み立て、切れ端の区切りだけ受け取る（終わったら作業場は閉じて記憶を返す）。
+// 画面と同じ所で組み立てると、iPhone ではその間ページ全体が止まった（2026-10-20 iPhone 12 mini で「辞書（0 秒）」のまま）
+function tokenizeOffPage(parts) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./japanese-worker.js', import.meta.url));
     const done = fn => v => { worker.terminate(); fn(v); };
     worker.onerror = e => { e.preventDefault?.(); done(reject)(new Error(e.message || '辞書の作業場を動かせませんでした')); };
     worker.onmessage = ({ data }) => {
       if (data.type !== 'done') { done(reject)(new Error(data.message || '辞書を組み立てられませんでした')); return; }
-      const got = new Map(parts.map((p, i) => [p, data.tokens[i]]));
-      log(`辞書（別の作業場）：切れ端 ${parts.length} 個`);
-      done(resolve)(fromRawTokenizer(p => got.get(p) ?? lightRawTokenize(p)));
+      done(resolve)(new Map(parts.map((p, i) => [p, data.tokens[i]])));
     };
     worker.postMessage({ lib: import.meta.resolve('kuromoji-build/kuromoji.js'), dicPath: dictPath(), parts });
   });
+}
+
+/** 歌詞の切れ端を区切っておき、読みと品詞を調べる係を作る。知らない切れ端は add で後から区切れる（AI が聞き取った言葉用） */
+async function loadJapaneseOffPage(lyrics, log = () => {}) {
+  const parts = [...new Set(parseLyrics(lyrics).flatMap(l => japaneseParts(l.text)))];
+  const got = await tokenizeOffPage(parts);
+  log(`辞書（別の作業場）：切れ端 ${parts.length} 個`);
+  return {
+    japanese: fromRawTokenizer(p => got.get(p) ?? lightRawTokenize(p)),
+    async add(texts) {
+      const more = [...new Set(texts.flatMap(t => japaneseParts(t)))].filter(p => !got.has(p));
+      if (!more.length) return;
+      for (const [k, v] of await tokenizeOffPage(more)) got.set(k, v);
+      log(`辞書（別の作業場）：聞き取った言葉の切れ端 ${more.length} 個`);
+    },
+  };
 }
 
 // AI は画面とは別の作業場（app/whisper-worker.js）で動かす。画面と同じ所で動かすと、聞き終わるまで
@@ -186,24 +175,25 @@ export async function makeSong({ file, lyrics, useAI, onStep, onLog }) {
 
   step('dict', 0); await paint();
   let japanese = null;
+  let dict = null;     // 辞書の係（聞き取った言葉を後から区切るため）
+  let noDict = false;  // 辞書が読めず、簡単な区切りにした
   // 英語の歌詞なら日本語の辞書は読まない（組み立てに約 240MB 使い、専用ページではそこで止まって落ちた）
   if (lyricsLanguage(lyrics) === 'english') { japanese = createEnglish(); step('dict', 1, '英語'); }
   else try {
-    japanese = await within(useAI ? loadJapanese() : loadJapaneseOffPage(lyrics, log), useAI ? 90 : 60, '辞書の読み込み');
+    dict = await within(loadJapaneseOffPage(lyrics, log), 60, '辞書の読み込み');
+    japanese = dict.japanese;
     step('dict', 1);
   } catch (e) {
     log(`辞書のエラー：${e?.message ?? e}`);
-    if (useAI) notes.push(`辞書を読み込めなかったので、言葉の演出なしで作りました（${e?.message ?? e}）`);
-    else {
-      // 辞書が使えなくても、漢字・カタカナのまとまりを言葉として拾って最後まで作る
-      japanese = fromRawTokenizer(lightRawTokenize);
-      notes.push(`辞書を読み込めなかったので、簡単な言葉の区切りで作りました（${e?.message ?? e}）`);
-    }
-    step('dict', 1, useAI ? 'なし' : '簡単');
+    // 辞書が使えなくても、漢字・カタカナのまとまりを言葉として拾って最後まで作る（AI の合わせには読みが要るので、AI は使わない）
+    japanese = fromRawTokenizer(lightRawTokenize);
+    noDict = true;
+    notes.push(`辞書を読み込めなかったので、簡単な言葉の区切りで作りました（${e?.message ?? e}）`);
+    step('dict', 1, '簡単');
   }
 
   let transcriber = null;
-  if (useAI && japanese && String(lyrics ?? '').trim()) {
+  if (useAI && japanese && !noDict && String(lyrics ?? '').trim()) {
     step('model', 0); await paint();
     try {
       let lastMove = performance.now();
@@ -216,7 +206,8 @@ export async function makeSong({ file, lyrics, useAI, onStep, onLog }) {
       const ai = await Promise.race([loading, stall]);
       // 歌詞が英語なら、AI にも英語として聞かせる（日本語のままだとカタカナに聞き違える）
       const language = lyricsLanguage(lyrics);
-      transcriber = { transcribe: (m, p) => ai.transcribe(m, p, language) };
+      // 聞き取った言葉の読みも辞書で調べてから合わせる（辞書は別の作業場なので、合わせる前に区切っておく）
+      transcriber = { transcribe: async (m, p) => { const words = await ai.transcribe(m, p, language); if (dict) await dict.add(words.map(w => w.text)); return words; } };
       step('model', 1);
     } catch (e) {
       log(`AI を使えない：${e?.message ?? e}`);

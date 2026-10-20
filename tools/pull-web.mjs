@@ -11,9 +11,9 @@ const here = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = process.env.LYRIVUE_DIR || join(here, '..', 'Lyrivue');
 const out = join(here, 'web');
 
-// 画面と、画面が読む部品（AI の部品 whisper-worker.js は、アプリでは使わないので写さない）
+// 画面と、画面が読む部品（AI の作業場 whisper-worker.js も。iPhone で AI が動くかの試し）
 const APP_FILES = ['app/play-check.html', 'app/play-check.js', 'app/demo-analysis.js', 'app/store.js', 'app/edit-icons.js',
-  'app/make-song.js', 'app/song-set.js', 'app/themes.js', 'app/flood-jump.js', 'app/japanese-worker.js', 'app/shims/kuromoji.js'];
+  'app/make-song.js', 'app/song-set.js', 'app/themes.js', 'app/flood-jump.js', 'app/japanese-worker.js', 'app/whisper-worker.js', 'app/shims/kuromoji.js'];
 const DIRS = ['director', 'render', 'shared', 'analyze', 'export'];
 
 rmSync(out, { recursive: true, force: true });

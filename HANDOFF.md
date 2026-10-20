@@ -16,6 +16,6 @@
 
 ## アプリだけの違い（tools/build-www.mjs・js/app-native.css・js/app-native.js）
 - Google Fonts → 中に入れた書体（fonts/）。辞書（kuromoji）と動画の部品（mp4-muxer）も中に入れる（電波なしで動く）
-- AI の歌合わせは使わない（iPhone では落ちる）。新しい曲はざっくりの時刻＋タップで合わせる
+- AI の歌合わせ：iPhone で動くかの試し中（2026-10-20）。切り替えを出し、transformers.js は jsdelivr・AI のデータは Hugging Face から読む。iPhone の初期値はオフ
 - 作る側の道具・いつもの曲は隠す
 - 動画の保存は iPhone の「共有」の画面（「ビデオを保存」で写真へ）
