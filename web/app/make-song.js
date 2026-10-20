@@ -3,7 +3,8 @@
 // AI が使えない・読み込めないときは、代わりの合わせ方（盛り上がっている範囲に文字数の比で並べる）で続ける。
 // 曲と歌詞はこのブラウザの中だけで使い、外へは送らない（外から読むのは AI のデータだけ）。
 import { analyzeSong } from '../analyze/index.js';
-import { lyricsLanguage } from '../analyze/lyrics.js';
+import { lyricsLanguage, parseLyrics } from '../analyze/lyrics.js';
+import { japaneseParts, fromRawTokenizer, lightRawTokenize } from '../analyze/japanese-core.js';
 import { createEnglish } from '../analyze/english.js';
 
 const here = p => new URL(p, import.meta.url).href;
@@ -31,12 +32,35 @@ function loadJapanese() {
     // 置き場所はページの読み込みの決まり（import map）。手元では node_modules、公開ページでは配信元
     if (!globalThis.kuromoji) await loadScript(import.meta.resolve('kuromoji-build/kuromoji.js'));
     const { createJapanese } = await import('../analyze/japanese.js');
-    // kuromoji は辞書の場所を道のようにつなぐ（// が / になる）ので、同じ置き場所なら道だけを渡す
-    const dict = new URL(import.meta.resolve('kuromoji-dict/'));
-    return createJapanese(dict.origin === location.origin ? dict.pathname : dict.href);
+    return createJapanese(dictPath());
   })();
   japanesePromise.catch(() => { japanesePromise = null; });
   return japanesePromise;
+}
+
+// 辞書の置き場所：kuromoji は辞書の場所を道のようにつなぐ（// が / になる）ので、同じ置き場所なら道だけを渡す
+function dictPath() {
+  const dict = new URL(import.meta.resolve('kuromoji-dict/'));
+  return dict.origin === location.origin ? dict.pathname : dict.href;
+}
+
+// AI を使わないとき：辞書は画面とは別の作業場（app/japanese-worker.js）で組み立て、歌詞の切れ端の区切りだけ受け取る。
+// 画面と同じ所で組み立てると、iPhone ではその間ページ全体が止まった（2026-10-20 iPhone 12 mini で「辞書（0 秒）」のまま）。
+// AI の合わせ（toKana に聞き取った言葉を渡す）には使えないので、AI を使うときは今までどおり画面の中で組み立てる
+function loadJapaneseOffPage(lyrics, log = () => {}) {
+  const parts = [...new Set(parseLyrics(lyrics).flatMap(l => japaneseParts(l.text)))];
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./japanese-worker.js', import.meta.url));
+    const done = fn => v => { worker.terminate(); fn(v); };
+    worker.onerror = e => { e.preventDefault?.(); done(reject)(new Error(e.message || '辞書の作業場を動かせませんでした')); };
+    worker.onmessage = ({ data }) => {
+      if (data.type !== 'done') { done(reject)(new Error(data.message || '辞書を組み立てられませんでした')); return; }
+      const got = new Map(parts.map((p, i) => [p, data.tokens[i]]));
+      log(`辞書（別の作業場）：切れ端 ${parts.length} 個`);
+      done(resolve)(fromRawTokenizer(p => got.get(p) ?? lightRawTokenize(p)));
+    };
+    worker.postMessage({ lib: import.meta.resolve('kuromoji-build/kuromoji.js'), dicPath: dictPath(), parts });
+  });
 }
 
 // AI は画面とは別の作業場（app/whisper-worker.js）で動かす。画面と同じ所で動かすと、聞き終わるまで
@@ -164,10 +188,18 @@ export async function makeSong({ file, lyrics, useAI, onStep, onLog }) {
   let japanese = null;
   // 英語の歌詞なら日本語の辞書は読まない（組み立てに約 240MB 使い、専用ページではそこで止まって落ちた）
   if (lyricsLanguage(lyrics) === 'english') { japanese = createEnglish(); step('dict', 1, '英語'); }
-  else try { japanese = await within(loadJapanese(), 90, '辞書の読み込み'); step('dict', 1); } catch (e) {
+  else try {
+    japanese = await within(useAI ? loadJapanese() : loadJapaneseOffPage(lyrics, log), useAI ? 90 : 60, '辞書の読み込み');
+    step('dict', 1);
+  } catch (e) {
     log(`辞書のエラー：${e?.message ?? e}`);
-    notes.push(`辞書を読み込めなかったので、言葉の演出なしで作りました（${e?.message ?? e}）`);
-    step('dict', 1, 'なし');
+    if (useAI) notes.push(`辞書を読み込めなかったので、言葉の演出なしで作りました（${e?.message ?? e}）`);
+    else {
+      // 辞書が使えなくても、漢字・カタカナのまとまりを言葉として拾って最後まで作る
+      japanese = fromRawTokenizer(lightRawTokenize);
+      notes.push(`辞書を読み込めなかったので、簡単な言葉の区切りで作りました（${e?.message ?? e}）`);
+    }
+    step('dict', 1, useAI ? 'なし' : '簡単');
   }
 
   let transcriber = null;
