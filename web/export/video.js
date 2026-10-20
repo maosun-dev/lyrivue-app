@@ -149,7 +149,7 @@ function recordMime() {
  * @param {Parameters<typeof encodeVideo>[0]} opts
  * @returns {Promise<{blob:Blob, ext:'mp4'|'webm', audio:boolean}>}
  */
-export async function recordVideo({ plan, draw, audio, onProgress, signal }) {
+export async function recordVideo({ plan, draw, audio, onProgress, signal, ac: given }) {
   const canvas = document.createElement('canvas');
   canvas.width = plan.width; canvas.height = plan.height;
   const ctx = canvas.getContext('2d');
@@ -159,8 +159,11 @@ export async function recordVideo({ plan, draw, audio, onProgress, signal }) {
   const stream = canvas.captureStream(plan.fps);
   let ac = null, src = null;
   if (audio) {
+    // iPhone の Safari は、ボタンを押した瞬間に作った音の仕組みでないと鳴らない（止まったまま時計が進まない）。
+    // そのため押したときに作ったもの（given）を使い、念のため動かし直す
     const AC = window.AudioContext || window.webkitAudioContext;
-    ac = new AC({ sampleRate: audio.sampleRate });
+    ac = given ?? new AC({ sampleRate: audio.sampleRate });
+    if (ac.state !== 'running') await ac.resume().catch(() => {});
     const dest = ac.createMediaStreamDestination();
     src = ac.createBufferSource();
     src.buffer = audio;
@@ -173,8 +176,10 @@ export async function recordVideo({ plan, draw, audio, onProgress, signal }) {
   rec.ondataavailable = e => { if (e.data?.size) parts.push(e.data); };
   const stopped = new Promise(r => { rec.onstop = r; });
   rec.start(1000);
-  const t0 = ac ? (src.start(), ac.currentTime) : performance.now() / 1000;
-  const clock = () => (ac ? ac.currentTime : performance.now() / 1000) - t0;
+  // 音の仕組みが動いていなければ（鳴らせない端末）、音なしでも最後まで録れるよう、ふつうの時計で進める
+  const live = ac && ac.state === 'running';
+  const t0 = live ? (src.start(), ac.currentTime) : performance.now() / 1000;
+  const clock = () => (live ? ac.currentTime : performance.now() / 1000) - t0;
   let aborted = false;
   await new Promise(resolve => {
     const loop = () => {
@@ -195,7 +200,7 @@ export async function recordVideo({ plan, draw, audio, onProgress, signal }) {
   if (aborted) throw abortError();
   onProgress?.(plan.frames, plan.frames);
   const type = rec.mimeType || mime || 'video/webm';
-  return { blob: new Blob(parts, { type }), ext: type.includes('mp4') ? 'mp4' : 'webm', audio: !!audio };
+  return { blob: new Blob(parts, { type }), ext: type.includes('mp4') ? 'mp4' : 'webm', audio: !!live };
 }
 
 /**

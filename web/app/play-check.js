@@ -1498,12 +1498,16 @@ $('ex-stop').addEventListener('click', () => ex.ctrl?.abort());
 $('ex-go').addEventListener('click', async () => {
   if (!state.script || state.exporting) return;
   pause(); closePicker();
+  // 録画になったときのための音の仕組みは、押した瞬間（待つ前）に作って動かしておく（iPhone の Safari はそうしないと鳴らない）
+  const AC = window.AudioContext || window.webkitAudioContext;
+  let liveAC = null;
+  try { if (state.hasSong && AC && canRecord()) { liveAC = new AC(); liveAC.resume().catch(() => {}); } } catch { liveAC = null; }
   const script = state.script, analysis = state.analysis; // 書き出し中に台本を変えても、押したときの MV で作る
   const plan = exportPlan({ aspect: ex.aspect, quality: ex.quality, duration: duration() });
   const msg = $('ex-msg');
   const bar = $('ex-bar').firstElementChild;
   msg.className = 'msg';
-  if (plan.frames === 0) { msg.textContent = '長さが 0 秒なので、動画にできません。'; return; }
+  if (plan.frames === 0) { liveAC?.close?.().catch(() => {}); msg.textContent = '長さが 0 秒なので、動画にできません。'; return; }
   state.exporting = true;
   ex.ctrl = new AbortController();
   $('ex-go').disabled = true; $('ex-stop').hidden = false; $('ex-bar').hidden = false; bar.style.width = '0';
@@ -1524,14 +1528,14 @@ $('ex-go').addEventListener('click', async () => {
       const left = done > 10 ? el / done * (total - done) : NaN;
       msg.textContent = `${encode ? '1コマずつ描いています' : '再生しながら録画しています'}：${done} / ${total} コマ` + (Number.isFinite(left) ? `・残り 約 ${left >= 90 ? Math.ceil(left / 60) + ' 分' : Math.ceil(left) + ' 秒'}` : '');
     };
-    const opts = { plan, draw, audio: sound, onProgress, signal: ex.ctrl.signal };
+    const opts = { plan, draw, audio: sound, onProgress, signal: ex.ctrl.signal, ac: liveAC };
     const out = encode ? await encodeVideo(opts) : await recordVideo(opts);
     const name = exportFileName(state.hasSong ? state.songFile?.name : (state.analysisName || 'demo'), plan.aspect, out.ext);
     const mb = (out.blob.size / 1048576).toFixed(1);
     msg.textContent = `できました（${plan.width}×${plan.height}・${fmt(plan.frames / plan.fps)}・${mb} MB・${out.audio ? '音あり' : '音なし'}）。保存しています…`;
     const r = await saveBlob(out.blob, name);
     msg.textContent = r === 'saved'
-      ? `保存しました：${name}（${plan.width}×${plan.height}・${mb} MB・${out.audio ? '音あり' : '音なし'}）`
+      ? `保存しました：${name}（${plan.width}×${plan.height}・${mb} MB・${out.audio ? '音あり' : '音なし'}）` + (!out.audio && state.hasSong ? `。この端末では曲の音を入れられませんでした（${sound ? (encode ? '音を詰める部品が無い' : '録画で音を鳴らせない') : '曲を読めない'}）` : '')
       : '保存をやめました。もう一度「動画にする」を押すと作り直します。';
   } catch (err) {
     if (err?.name === 'AbortError') { msg.textContent = '書き出しをやめました。'; }
@@ -1539,6 +1543,7 @@ $('ex-go').addEventListener('click', async () => {
   } finally {
     state.exporting = false;
     ex.ctrl = null;
+    if (liveAC && liveAC.state !== 'closed') liveAC.close().catch(() => {});
     $('ex-go').disabled = !state.script; $('ex-stop').hidden = true;
     draw();
   }
