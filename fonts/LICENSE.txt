@@ -1,0 +1,6 @@
+このフォルダのフォントは SIL Open Font License 1.1 で配られています（https://openfontlicense.org/）。
+- Dela Gothic One
+- DotGothic16
+- Shippori Mincho B1
+- Yusei Magic
+- Zen Kaku Gothic New

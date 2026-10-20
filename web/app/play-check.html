@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<script>/* ファイルを直接開いたとき（file://）は動かないので、確認用サーバーのアドレスへ移る */ if (location.protocol === 'file:') location.replace('http://localhost:8766/app/' + location.pathname.split('/').pop());</script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#241A36">
+<title>Lyrivue</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Zen+Kaku+Gothic+New:wght@500;700;900&family=Shippori+Mincho+B1:wght@500;800&family=Yusei+Magic&family=DotGothic16&display=swap" rel="stylesheet">
+<!-- 外の部品の置き場所：AI（transformers.js）・辞書（kuromoji の本体・辞書・橋渡し）・mp4 に詰める部品。
+     どの module script よりも前に置くこと。公開ページでは tools/build-check-page.mjs が配信元（jsdelivr）に書き換える -->
+<script type="importmap">
+{
+  "imports": {
+    "@huggingface/transformers": "../node_modules/@huggingface/transformers/dist/transformers.js",
+    "kuromoji": "./shims/kuromoji.js",
+    "kuromoji-build/": "../node_modules/kuromoji/build/",
+    "kuromoji-dict/": "../node_modules/kuromoji/dict/",
+    "mp4-muxer": "../node_modules/mp4-muxer/build/mp4-muxer.mjs"
+  }
+}
+</script>
+<style>
+  :root {
+    --night: #241A36;
+    --dusk: #33264A;
+    --dusk-line: #4A3A66;
+    --cream: #F6E7C1;
+    --cream-dim: #B9AC93;
+    --lilac: #E58BFF;
+    --violet: #5B3BFF;
+    --rose: #FF3E7F;
+    --lemon: #FFDF3D;
+    --display: "Dela Gothic One", "Hiragino Sans", sans-serif;
+    --body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; } /* 横並びの指定（.row など）より「隠す」を優先する */
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--night); color: var(--cream); font: 500 16px/1.7 var(--body); padding-block: 0 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .wrap { max-width: 480px; margin: 0 auto; }
+  :focus-visible { outline: 2px solid var(--lemon); outline-offset: 2px; }
+  h1 { margin: 0; padding: 28px 0 4px; font: 400 24px/1.2 var(--display); }
+  .sub { margin: 0 0 20px; color: var(--cream-dim); font-size: 13px; }
+  section { margin-top: 22px; }
+  h2 { margin: 0 0 8px; font: 400 16px/1.3 var(--display); }
+
+  /* 読み込み */
+  .pick { display: grid; gap: 10px; }
+  .pick label { display: grid; gap: 4px; font-size: 13px; color: var(--cream-dim); }
+  input[type=file] { color: var(--cream); font: inherit; font-size: 14px; background: var(--dusk); border: 1px solid var(--dusk-line); border-radius: 10px; padding: 8px; width: 100%; }
+  .msg { margin: 10px 0 0; min-height: 1.7em; font-size: 14px; color: var(--cream-dim); }
+  .msg.err { color: var(--rose); }
+  /* いつもの曲：曲名は歌詞と同じ明朝で、読み込んだ曲は黄色 */
+  .set { margin-top: 6px; }
+  .small.song { font: 800 16px/1 "Shippori Mincho B1", serif; padding: 12px 16px; }
+  .small.song[aria-pressed=true] { border-color: var(--lemon); color: var(--lemon); }
+  .small.song[aria-busy=true] { opacity: .6; cursor: progress; }
+  /* 埋める組みへ飛ぶ：番号は黄色、模様の名前は歌詞と同じ明朝 */
+  .jump { align-items: center; }
+  .jump-now { font-size: 13px; color: var(--cream-dim); min-width: 0; }
+  .jump-now b { color: var(--lemon); font-variant-numeric: tabular-nums; font-weight: 700; }
+  .jump-now em { font: 800 15px/1.3 "Shippori Mincho B1", serif; font-style: normal; color: var(--cream); }
+
+  /* 舞台：絵を映す枠 */
+  .stage { display: flex; justify-content: center; margin-top: 8px; }
+  canvas { display: block; width: 100%; background: #000; border-radius: 6px; box-shadow: 0 0 0 1px var(--dusk-line); }
+  .stage[data-aspect="portrait"] canvas { max-width: 300px; aspect-ratio: 9 / 16; }
+  .stage[data-aspect="landscape"] canvas { aspect-ratio: 16 / 9; }
+
+  /* 操作 */
+  .bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .play { flex: none; width: 52px; height: 52px; border: 0; border-radius: 50%; background: var(--violet); color: #fff; cursor: pointer; display: grid; place-items: center; }
+  .play:disabled { background: var(--dusk-line); cursor: default; }
+  .play svg { width: 22px; height: 22px; }
+  .time { flex: none; font: 700 14px/1 var(--body); color: var(--lemon); font-variant-numeric: tabular-nums; min-width: 9.5em; text-align: right; }
+  input[type=range] { flex: 1; min-width: 0; accent-color: var(--lilac); }
+  .row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .small { border: 1px solid var(--dusk-line); background: var(--dusk); color: var(--cream); font: 700 14px/1 var(--body); padding: 10px 14px; border-radius: 10px; cursor: pointer; }
+  .small[aria-pressed=true] { border-color: var(--lilac); color: var(--lilac); }
+  .small:disabled { opacity: .45; cursor: default; }
+  /* 使う書体：ボタンの文字そのものがその書体の見本。外した書体は薄く、消し線 */
+  .faces { margin-top: 6px; gap: 8px; }
+  .small.face { font-weight: 400; font-size: 17px; padding: 9px 14px; }
+  /* 使う世界：小さな色見本（地の色に線の色の帯）と名前。外した世界は薄く、消し線 */
+  .worlds { margin-top: 6px; gap: 6px; }
+  .small.world { display: inline-flex; align-items: center; gap: 7px; font-weight: 400; padding: 8px 11px; }
+  .small.world i { width: 20px; height: 13px; border-radius: 3px; box-shadow: 0 0 0 1px var(--dusk-line); flex: none; }
+  .small.world[aria-pressed=false] { color: var(--cream-dim); border-style: dashed; text-decoration: line-through; text-decoration-color: var(--rose); }
+  .small.world[aria-pressed=false] i { opacity: .35; }
+  .small.face[aria-pressed=false] { color: var(--cream-dim); border-style: dashed; text-decoration: line-through; text-decoration-color: var(--rose); }
+
+  /* 台本の要約 */
+  .summary { font-size: 13px; color: var(--cream-dim); line-height: 1.8; }
+  .summary b { color: var(--cream); font-weight: 700; }
+  .chips { display: inline-flex; gap: 4px; vertical-align: middle; }
+  .chips i { width: 14px; height: 14px; border-radius: 4px; box-shadow: 0 0 0 1px var(--dusk-line); }
+  ol.scenes { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+  ol.scenes li { background: var(--dusk); border-radius: 10px; padding: 8px 12px; }
+  ol.scenes li.now { box-shadow: 0 0 0 2px var(--lilac); }
+  /* 調整パネル */
+  details > summary { cursor: pointer; list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary h2 { display: inline-block; margin: 0; }
+  details > summary h2::after { content: ' ▾'; color: var(--cream-dim); font-size: 13px; }
+  .tune { display: grid; gap: 10px; margin-top: 8px; }
+  .tune label { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 13px; color: var(--cream-dim); }
+  .tune label b { color: var(--lemon); font-variant-numeric: tabular-nums; }
+  .tune input[type=range] { grid-column: 1 / -1; width: 100%; }
+  /* 演出を消す：止めた画面をタップすると出る一覧 */
+  .hint { margin: 10px 0 0; font-size: 13px; color: var(--cream-dim); }
+  canvas { cursor: pointer; transition: box-shadow .15s; }
+  .stage.peek canvas { box-shadow: 0 0 0 2px var(--lemon); }
+  .stage { position: relative; }
+  .peek-badge { position: absolute; top: 8px; left: 50%; translate: -50% 0; background: var(--lemon); color: var(--night); font: 700 12px/1 var(--body); padding: 6px 10px; border-radius: 999px; pointer-events: none; }
+  .picker { margin-top: 14px; background: var(--dusk); border-radius: 14px; padding: 12px 14px 14px; box-shadow: 0 0 0 1px var(--dusk-line); }
+  .picker-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .picker-head h2 { margin: 0; }
+  .picker-head h2 b { color: var(--lemon); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .x { flex: none; width: 36px; height: 36px; border: 0; border-radius: 50%; background: transparent; color: var(--cream-dim); cursor: pointer; display: grid; place-items: center; }
+  .x:hover { color: var(--cream); background: var(--dusk-line); }
+  .x svg { width: 16px; height: 16px; }
+  .picker .sub { margin: 4px 0 6px; }
+  .fx-group { margin: 10px 0 4px; font-size: 12px; color: var(--cream-dim); }
+  .fx-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px; padding: 4px 0 4px 10px; border-left: 2px solid var(--dusk-line); touch-action: manipulation; }
+  .fx-row + .fx-row { margin-top: 2px; }
+  .fx-row .name { position: relative; width: fit-content; font-size: 15px; font-weight: 700; user-select: none; -webkit-user-select: none; }
+  .fx-row .name small { font-weight: 500; color: var(--cream-dim); margin-left: 6px; font-size: 12px; }
+  /* 指を置いた行：名前に黄色の消し線が走る（消したときの見え方を画面に出している印） */
+  .fx-row .name::after { content: ''; position: absolute; left: -2px; right: -2px; top: 55%; height: 3px; background: var(--lemon); border-radius: 2px; transform: scaleX(0); transform-origin: left; transition: transform .22s ease-out; }
+  .fx-row.peeking { border-left-color: var(--lemon); }
+  .fx-row.peeking .name::after { transform: scaleX(1); }
+  .fx-row .small { padding: 8px 10px; font-size: 13px; }
+  .fx-row .all { border-color: var(--rose); color: var(--rose); }
+  .fx-empty { margin: 8px 0 0; font-size: 14px; color: var(--cream-dim); }
+  .removed { display: flex; flex-wrap: wrap; gap: 6px; font-size: 13px; color: var(--cream-dim); }
+  .removed button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--dusk-line); background: transparent; color: var(--cream); font: 700 13px/1 var(--body); padding: 7px 10px; border-radius: 999px; cursor: pointer; text-decoration: line-through; text-decoration-color: var(--rose); text-decoration-thickness: 2px; }
+  .removed button span { text-decoration: none; color: var(--cream-dim); font-weight: 500; }
+
+  /* 新しい曲で作る */
+  textarea.lyrics { width: 100%; min-height: 9.5em; background: var(--dusk); color: var(--cream); border: 1px solid var(--dusk-line); border-radius: 10px; padding: 10px 12px; font: 500 15px/1.75 "Shippori Mincho B1", serif; resize: vertical; }
+  textarea.lyrics::placeholder { color: var(--cream-dim); opacity: .7; }
+  .go { border: 0; background: var(--violet); color: #fff; font: 400 16px/1 var(--display); padding: 14px 22px; border-radius: 999px; cursor: pointer; }
+  .go:disabled { background: var(--dusk-line); color: var(--cream-dim); cursor: default; }
+  /* 進み具合：段階は順番に進むので、つながった点で見せる */
+  .steps { display: flex; margin: 14px 0 0; padding: 0; list-style: none; }
+  .steps li { flex: 1; position: relative; padding-top: 16px; font-size: 11px; line-height: 1.3; color: var(--cream-dim); text-align: center; }
+  .steps li::before { content: ''; position: absolute; top: 4px; left: 0; right: 0; height: 2px; background: var(--dusk-line); }
+  .steps li::after { content: ''; position: absolute; top: 0; left: 50%; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: var(--night); box-shadow: inset 0 0 0 2px var(--dusk-line); }
+  .steps li.run { color: var(--cream); }
+  .steps li.run::after { background: var(--lilac); box-shadow: none; }
+  .steps li.done::before, .steps li.run::before { background: linear-gradient(90deg, var(--lilac) var(--r, 100%), var(--dusk-line) var(--r, 100%)); }
+  .steps li.done::after { background: var(--lilac); box-shadow: none; }
+  .steps li.skip { opacity: .55; }
+  .steps li i { display: block; font-style: normal; color: var(--cream-dim); }
+
+  /* タップで合わせる：いま歌う行と、たたく大きな丸 */
+  .tap { margin-top: 12px; background: var(--dusk); border-radius: 14px; padding: 14px; box-shadow: 0 0 0 1px var(--dusk-line); }
+  .tap-now { margin: 0; min-height: 2.6em; font: 800 21px/1.4 "Shippori Mincho B1", serif; color: var(--cream); }
+  .tap-next { margin: 2px 0 0; min-height: 1.6em; font: 500 14px/1.5 "Shippori Mincho B1", serif; color: var(--cream-dim); }
+  .tap-count { font: 700 13px/1 var(--body); color: var(--lemon); font-variant-numeric: tabular-nums; }
+  .tap-hit { display: grid; place-items: center; width: 150px; height: 150px; margin: 14px auto 6px; border: 0; border-radius: 50%; background: var(--lemon); color: var(--night); font: 400 30px/1 var(--display); cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; box-shadow: 0 0 0 6px rgba(255,223,61,.18); }
+  .tap-hit:disabled { background: var(--dusk-line); color: var(--cream-dim); box-shadow: none; cursor: default; }
+  .tap-hit.hit { animation: tap-ring .32s ease-out; }
+  @keyframes tap-ring { from { box-shadow: 0 0 0 0 rgba(255,223,61,.75); transform: scale(.94); } to { box-shadow: 0 0 0 26px rgba(255,223,61,0); transform: scale(1); } }
+  .tap select { background: var(--night); color: var(--cream); border: 1px solid var(--dusk-line); border-radius: 10px; padding: 8px; font: 500 14px/1.3 var(--body); max-width: 100%; }
+
+  /* 動画にする */
+  .nslog { margin-top: 10px; font-size: 13px; color: var(--cream-dim); }
+  .nslog summary { cursor: pointer; }
+  .progress { height: 8px; margin-top: 14px; background: var(--dusk); border-radius: 999px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--dusk-line); }
+  .progress i { display: block; height: 100%; width: 0; background: var(--lemon); }
+  @media (prefers-reduced-motion: reduce) { .fx-row .name::after, canvas { transition: none; } }
+  /* 止めた画面でやることの切り替え（演出を消す／この行を直す） */
+  .seg { display: grid; grid-template-columns: 1fr 1fr; margin: 10px 0 4px; padding: 3px; background: var(--night); border-radius: 999px; box-shadow: inset 0 0 0 1px var(--dusk-line); }
+  .seg button { border: 0; background: transparent; color: var(--cream-dim); font: 700 14px/1 var(--body); padding: 10px 8px; border-radius: 999px; cursor: pointer; }
+  .seg button[aria-pressed=true] { background: var(--lemon); color: var(--night); }
+  /* この行を直す */
+  .ed-head { margin-top: 10px; display: grid; gap: 8px; }
+  .ed-line { margin: 0; font: 400 19px/1.45 "Shippori Mincho B1", serif; font-weight: 800; color: var(--cream); }
+  .ed-line .no { display: inline-block; margin-right: 8px; font: 700 12px/1 var(--body); color: var(--night); background: var(--lemon); padding: 4px 7px; border-radius: 4px; vertical-align: 3px; }
+  .ed-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ed-tools .small { padding: 8px 11px; font-size: 13px; }
+  .ed-block { margin-top: 16px; }
+  .ed-label { margin: 0 0 6px; font-size: 13px; color: var(--cream-dim); display: flex; justify-content: space-between; gap: 8px; }
+  .ed-label b { color: var(--cream); font-weight: 700; }
+  .ed-label em { font-style: normal; color: var(--lemon); }
+  .chars { display: flex; flex-wrap: wrap; gap: 4px; }
+  .ch { width: 36px; height: 42px; border: 1px solid var(--dusk-line); background: var(--night); color: var(--cream); font: 800 20px/1 "Shippori Mincho B1", serif; border-radius: 6px; cursor: pointer; padding: 0; }
+  .ch.sp { width: 16px; }
+  .ch.on { background: var(--cream); color: var(--night); border-color: var(--cream); }
+  .ch.from { outline: 2px dashed var(--lemon); outline-offset: 2px; }
+  .chars + .row { margin-top: 8px; }
+  .icons { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .ic { display: grid; justify-items: center; gap: 3px; border: 1px solid var(--dusk-line); background: var(--night); color: var(--cream-dim); border-radius: 10px; padding: 8px 2px 7px; font: 700 11px/1.2 var(--body); cursor: pointer; min-width: 0; }
+  .ic svg { width: 44px; height: 30px; overflow: visible; }
+  .ic[aria-pressed=true] { border-color: var(--lilac); color: var(--lilac); background: color-mix(in srgb, var(--lilac) 12%, var(--night)); }
+  .ic:hover { color: var(--cream); }
+  .ic[aria-pressed=true]:hover { color: var(--lilac); }
+  .sizes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; align-items: stretch; }
+  .sz { display: grid; align-content: end; justify-items: center; gap: 4px; border: 1px solid var(--dusk-line); background: var(--night); color: var(--cream); border-radius: 10px; padding: 8px 2px 7px; cursor: pointer; min-height: 78px; }
+  .sz span { font: 800 16px/1 "Shippori Mincho B1", serif; white-space: nowrap; }
+  .sz small { font: 700 11px/1.2 var(--body); color: var(--cream-dim); }
+  .sz[aria-pressed=true] { border-color: var(--lilac); background: color-mix(in srgb, var(--lilac) 12%, var(--night)); }
+  .sz[aria-pressed=true] small { color: var(--lilac); }
+  .variant { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .variant .now { font-size: 13px; color: var(--cream-dim); }
+  .variant .now b { color: var(--lemon); }
+  .ic span, .sz small, .ed-label b, .ed-label em { word-break: keep-all; } /* 言葉の途中で折らない（折る場所は名前に入れてある） */
+  .ed-label { flex-wrap: wrap; }
+  @media (max-width: 400px) { .ic, .sz small { font-size: 10px; letter-spacing: -.03em; } .icons, .sizes { gap: 4px; } }
+  .ed-tools + .ed-tools { margin-top: -2px; }
+  .small.arrow { display: inline-flex; align-items: center; gap: 5px; }
+  .small.arrow svg { width: 12px; height: 12px; }
+  /* 直す前を見る：押している間は黄色（画面の上の印と同じ色） */
+  .small.hold { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .small.hold.holding { background: var(--lemon); color: var(--night); border-color: var(--lemon); }
+  .nudge { grid-template-columns: repeat(4, 1fr); }
+  .ed-note { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: var(--cream-dim); }
+  /* 行を直している間は、画面の上で指を動かしてもページが動かない（つまんで動かすため） */
+  .stage.editing canvas { touch-action: none; }
+  .ed-empty { margin: 10px 0 0; font-size: 14px; color: var(--cream-dim); }
+  .edited { display: grid; gap: 6px; }
+  .edited button { display: grid; gap: 2px; text-align: left; border: 1px solid var(--dusk-line); background: var(--dusk); color: var(--cream); border-radius: 10px; padding: 8px 12px; cursor: pointer; font: 800 15px/1.4 "Shippori Mincho B1", serif; }
+  .edited button span { font: 500 12px/1.5 var(--body); color: var(--cream-dim); }
+  .edited button.stale { opacity: .5; }
+  .edited .none { font-size: 13px; color: var(--cream-dim); }
+  textarea.json { width: 100%; margin-top: 10px; background: var(--dusk); color: var(--cream); border: 1px solid var(--dusk-line); border-radius: 10px; padding: 8px; font: 12px/1.5 ui-monospace, Consolas, monospace; resize: vertical; }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } .tap-hit.hit { animation: none; } }
+
+  /* ---- 使う人の画面（3 段） ---- */
+  .top h1 { padding-bottom: 2px; font-size: 30px; letter-spacing: .02em; }
+  .top .sub { margin-bottom: 18px; font: 500 14px/1.7 "Shippori Mincho B1", serif; color: var(--cream-dim); }
+  /* 手順：駅を結ぶ線。通った区間は藤色で塗り、いまいる駅は黄色の輪 */
+  .route { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); margin: 0 0 6px; }
+  .route::before { content: ''; position: absolute; top: 17px; left: calc(100% / 6); right: calc(100% / 6); height: 3px; border-radius: 2px;
+    background: linear-gradient(90deg, var(--lilac) var(--p, 0%), var(--dusk-line) var(--p, 0%)); transition: background .35s ease-out; }
+  .route button { position: relative; display: grid; justify-items: center; gap: 6px; padding: 8px 2px 6px; border: 0; background: transparent; color: var(--cream-dim); cursor: pointer; font: 800 15px/1.2 "Shippori Mincho B1", serif; }
+  .route button:disabled { cursor: default; opacity: .55; }
+  .route i { width: 22px; height: 22px; border-radius: 50%; background: var(--night); box-shadow: inset 0 0 0 3px var(--dusk-line); transition: background .2s, box-shadow .2s; }
+  .route button.done i { background: var(--lilac); box-shadow: none; }
+  .route button[aria-current=step] { color: var(--cream); }
+  .route button[aria-current=step] i { background: var(--lemon); box-shadow: 0 0 0 5px rgba(255,223,61,.2); }
+  .leg > section:first-child { margin-top: 14px; }
+  /* 新しい曲：いつもの曲との間に、地の線で区切る */
+  .new-song { margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--dusk-line); }
+  /* テーマ：その世界の地の色を短冊に並べた見本と、明朝の名前 */
+  .themes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .theme { display: grid; gap: 7px; text-align: left; border: 1px solid var(--dusk-line); background: var(--dusk); color: var(--cream); border-radius: 12px; padding: 8px 8px 10px; cursor: pointer; min-width: 0; }
+  .theme .strip { display: flex; height: 34px; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--dusk-line); }
+  .theme .strip i { flex: 1; }
+  .theme b { font: 800 16px/1.2 "Shippori Mincho B1", serif; padding: 0 2px; }
+  .theme small { font-size: 11px; line-height: 1.3; color: var(--cream-dim); padding: 0 2px; }
+  .theme[aria-pressed=true] { border-color: var(--lemon); box-shadow: 0 0 0 1px var(--lemon); }
+  .theme[aria-pressed=true] b { color: var(--lemon); }
+  .themes-note { margin: 8px 0 0; font-size: 12px; color: var(--cream-dim); }
+  .seg.two { margin-top: 0; max-width: 300px; }
+  .fold > summary h2 { display: inline; }
+  .fold > summary h2::after { content: ' ▾'; color: var(--cream-dim); font-size: 13px; }
+  .fold[open] > summary h2::after { content: ' ▴'; }
+  .next { margin-top: 30px; }
+  .next .go, .go-row .go { width: 100%; padding: 17px 22px; font-size: 18px; }
+  .go-row { margin-top: 20px; }
+  .go-row .small { flex: none; }
+  .go-row:has(#ex-stop:not([hidden])) .go { width: auto; flex: 1; }
+  .what { margin: 0 0 4px; font: 800 20px/1.45 "Shippori Mincho B1", serif; }
+  .what small { display: block; font: 500 13px/1.6 var(--body); color: var(--cream-dim); }
+  h2.gap { margin-top: 18px; }
+  /* 作る側の道具：使う人の画面の下に、点線で区切ってしまう */
+  .tools { margin-top: 48px; padding-top: 14px; border-top: 1px dashed var(--dusk-line); }
+  .tools > summary { font-size: 13px; color: var(--cream-dim); padding: 6px 0; }
+  .tools > summary::after { content: ' ▾'; }
+  .tools[open] > summary::after { content: ' ▴'; }
+  @media (prefers-reduced-motion: reduce) { .route::before, .route i { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Lyrivue</h1>
+    <p class="sub">曲と歌詞を入れるだけで、歌詞の世界を旅する MV ができます。</p>
+  </header>
+
+  <!-- 3 段：曲と歌詞を入れる → 見る → 動画にする（docs/lyrivue-direction.md「アプリの画面（3 段）」）。駅を結ぶ線のように、通った段は塗る -->
+  <nav class="route" id="route" aria-label="手順">
+    <button type="button" data-step="1" aria-current="step"><i aria-hidden="true"></i><span>曲と歌詞</span></button>
+    <button type="button" data-step="2" disabled><i aria-hidden="true"></i><span>見る</span></button>
+    <button type="button" data-step="3" disabled><i aria-hidden="true"></i><span>動画にする</span></button>
+  </nav>
+
+  <!-- 1 曲と歌詞を入れる -->
+  <div class="leg" data-step="1">
+    <section>
+      <h2>いつもの曲</h2>
+      <div class="row set" id="song-set" role="group" aria-label="いつもの曲"></div>
+      <p class="msg" id="set-msg" role="status"></p>
+    </section>
+
+    <section class="new-song">
+      <h2>新しい曲で作る</h2>
+      <div class="pick">
+        <label>曲
+          <input type="file" id="ns-song" accept="audio/*,.wav,.mp3,.m4a,.aac,.flac,.ogg">
+        </label>
+        <label>歌詞（[サビ] や [Chorus] の見出しがあると、場面の区切りに使います）
+          <textarea id="ns-lyrics" class="lyrics" placeholder="[Verse 1]&#10;一行ずつ貼ってください"></textarea>
+        </label>
+      </div>
+      <div class="row">
+        <button type="button" class="small" id="ns-ai" aria-pressed="true">AI で歌に合わせる：オン</button>
+      </div>
+      <p class="hint" id="ns-ai-hint">AI は最初に約 80MB のデータを読み込みます。iPhone では動かないので、オフにして、見る段の「タップで合わせる」を使ってください。曲と歌詞はこの端末の中だけで使います。</p>
+      <div class="row"><button type="button" class="go" id="ns-go" disabled>作る</button></div>
+      <ol class="steps" id="ns-steps" hidden></ol>
+      <p class="msg" id="ns-msg" role="status"></p>
+      <details class="nslog" id="ns-log-box" hidden>
+        <summary>うまくいかないときの記録（止まったら、ここを開いて「記録をコピー」）</summary>
+        <textarea id="ns-log" class="json" readonly rows="8" aria-label="作るときの記録"></textarea>
+        <div class="row"><button type="button" class="small" id="ns-log-copy">記録をコピー</button></div>
+      </details>
+    </section>
+  </div>
+
+  <!-- 2 見る -->
+  <div class="leg" data-step="2" hidden>
+    <section>
+      <div class="stage" id="stage" data-aspect="portrait"><canvas id="cv" width="300" height="533" aria-label="MVのプレビュー。タップすると止まり、出ている演出の一覧が開きます"></canvas><span class="peek-badge" id="peek-badge" hidden>消したときの見え方</span></div>
+      <div class="bar">
+        <button type="button" class="play" id="play" aria-label="再生" disabled></button>
+        <input type="range" id="seek" min="0" max="0" step="0.01" value="0" disabled aria-label="再生位置">
+        <span class="time" id="time">0:00.0 / 0:00.0</span>
+      </div>
+      <p class="msg" id="view-msg" role="status"></p>
+      <div class="row">
+        <button type="button" class="small" id="portrait" aria-pressed="true">縦（9:16）</button>
+        <button type="button" class="small" id="landscape" aria-pressed="false">横（16:9）</button>
+        <button type="button" class="small" id="again" disabled>もう一案</button>
+      </div>
+      <p class="hint" id="pick-hint">画面をタップすると止まり、そのとき出ている演出を消したり、タップした行を直したりできます。</p>
+      <div class="picker" id="picker" hidden>
+        <div class="picker-head">
+          <h2 id="picker-title">出ている演出</h2>
+          <button type="button" class="x" id="picker-close" aria-label="一覧を閉じる"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3l10 10M13 3L3 13"/></svg></button>
+        </div>
+        <div class="seg" role="group" aria-label="止めた画面でやること">
+          <button type="button" id="mode-remove" aria-pressed="true">演出を消す</button>
+          <button type="button" id="mode-edit" aria-pressed="false">この行を直す</button>
+        </div>
+        <div id="remove-panel">
+          <p class="sub">名前に指を置く（マウスを乗せる）と、消したときの見え方が画面に出ます。「ここだけ」はこの場面の1回だけ、「全部」は曲全体から消します。</p>
+          <div id="picker-list"></div>
+        </div>
+        <div id="edit-panel" hidden></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>テーマ</h2>
+      <div class="themes" id="themes" role="group" aria-label="テーマ"></div>
+    </section>
+
+    <section>
+      <h2>最後の世界</h2>
+      <!-- 2026-10-19 持ち主「アプリでは最後の世界を不要か明るくするか選べるように」：最後の区切りと終わりの間奏を、同じ世界の明るい色にするか、そのままか -->
+      <div class="seg two" role="group" aria-label="最後の世界">
+        <button type="button" id="ending-bright" aria-pressed="true">明るく</button>
+        <button type="button" id="ending-stay" aria-pressed="false">そのまま</button>
+      </div>
+    </section>
+
+    <section>
+      <details class="fold" id="tap-fold">
+        <summary><h2>歌とずれていたら：タップで合わせる</h2></summary>
+        <p class="sub">曲を流しながら、各行の歌い出しで「いま」を押します（パソコンはスペースキーでも）。途中でやめても、押したところまで使えます。</p>
+        <div class="row">
+          <button type="button" class="small" id="tap-start" disabled>合わせ始める</button>
+        </div>
+        <div class="tap" id="tap-box" hidden>
+          <div class="row" style="margin-top:0; align-items:center">
+            <label class="hint" style="margin:0">始める行 <select id="tap-from" aria-label="始める行"></select></label>
+            <span class="tap-count" id="tap-count"></span>
+          </div>
+          <p class="tap-now" id="tap-now"></p>
+          <p class="tap-next" id="tap-next"></p>
+          <button type="button" class="tap-hit" id="tap-hit">いま</button>
+          <div class="row">
+            <button type="button" class="small" id="tap-undo" disabled>ひとつ戻す</button>
+            <button type="button" class="small" id="tap-done">ここまでで合わせる</button>
+            <button type="button" class="small" id="tap-cancel">やめる（使わない）</button>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <div class="next"><button type="button" class="go" data-go="3">動画にする</button></div>
+  </div>
+
+  <!-- 3 動画にする -->
+  <div class="leg" data-step="3" hidden>
+    <section>
+      <p class="what" id="ex-what"></p>
+      <p class="sub">直した行・消した演出もそのまま、曲の音つきの動画ファイルにします。1コマずつ描くので、曲の長さより時間がかかることがあります。</p>
+      <h2>向き</h2>
+      <div class="row">
+        <button type="button" class="small" id="ex-portrait" aria-pressed="true">縦（9:16）</button>
+        <button type="button" class="small" id="ex-landscape" aria-pressed="false">横（16:9）</button>
+      </div>
+      <h2 class="gap">画質</h2>
+      <div class="row">
+        <button type="button" class="small" id="ex-1080" aria-pressed="true">きれい（1080p）</button>
+        <button type="button" class="small" id="ex-720" aria-pressed="false">速い（720p）</button>
+      </div>
+      <div class="row go-row">
+        <button type="button" class="go" id="ex-go" disabled>動画にする</button>
+        <button type="button" class="small" id="ex-stop" hidden>やめる</button>
+      </div>
+      <div class="progress" id="ex-bar" hidden><i></i></div>
+      <p class="msg" id="ex-msg" role="status"></p>
+      <div class="row"><button type="button" class="small" data-go="2">見る段に戻る</button></div>
+    </section>
+  </div>
+
+  <!-- 作る側の道具：使う人には要らないもの（持ち主が確かめ・選び直しに使う）。開いたかどうかはこのブラウザに覚える -->
+  <details class="tools" id="tools">
+    <summary>作る側の道具</summary>
+
+    <section>
+      <h2>作ってある解析結果で見る</h2>
+      <div class="pick">
+        <label>解析結果（eval/audio/○○-analysis.json）
+          <input type="file" id="analysis" accept=".json,application/json">
+        </label>
+        <label>曲（なくても見られます。その場合は無音で進みます）
+          <input type="file" id="song" accept="audio/*,.wav,.mp3,.m4a,.aac,.flac,.ogg">
+        </label>
+      </div>
+      <div class="row"><button type="button" class="small" id="demo">デモで見る（ファイル不要）</button><button type="button" class="small" id="save-analysis" disabled>解析結果を保存</button><button type="button" class="small" id="forget" hidden>覚えたファイルを忘れる</button></div>
+      <p class="msg" id="msg" role="status"></p>
+      <p class="msg err" id="filewarn" hidden>このページはファイルを直接開いても動きません。ターミナルで <code>node tools/serve.mjs 8766</code> を動かし、<code>http://localhost:8766/app/play-check.html</code> を開いてください。</p>
+    </section>
+
+    <section>
+      <h2>見え方</h2>
+      <!-- 歌詞で埋める組みの出る所へ飛ぶ（2026-10-19 持ち主「動画を見ないとよくわからん」） -->
+      <div class="row jump" role="group" aria-label="歌詞で埋める組みの出る所へ飛ぶ">
+        <button type="button" class="small arrow" id="fl-prev" disabled>前の埋める組み</button>
+        <button type="button" class="small arrow" id="fl-next" disabled>次の埋める組み</button>
+        <span class="jump-now" id="fl-now" aria-live="polite"></span>
+      </div>
+      <!-- 雰囲気の切り替え（S・D・B）。2026-10-20 持ち主「まず S で配信してアプデ」→ D・B は見えないようにしておくだけ（コードは残す。hidden を外せば戻る） -->
+      <div class="row" hidden>
+        <button type="button" class="small" id="moodS" aria-pressed="true">空間に散らす（S）</button>
+        <button type="button" class="small" id="moodD" aria-pressed="false">廊下に重ねる（D）</button>
+        <button type="button" class="small" id="moodB" aria-pressed="false">跳ねる文字（B）</button>
+      </div>
+      <div class="row">
+        <button type="button" class="small" id="motifs" aria-pressed="true">言葉の演出（月・雨・時計などの小物）：オン</button>
+      </div>
+      <!-- 文字を載せる器：2026-10-19 方針「歌詞の世界を旅する」（docs/lyrivue-direction.md）で外した。部品とコードは残す（buildScript の opts.vessels: true で入る） -->
+      <!-- 文字のあとに貼る飾り：2026-10-18 持ち主「ステッカー的なのは要らない。線画が強いほうがいい」→ 隠して初期はなし（hidden を外せば戻る） -->
+      <p class="hint" hidden>文字のあとに貼る飾り</p>
+      <div class="row" id="stickers" role="group" aria-label="文字のあとに貼る飾り" hidden>
+        <button type="button" class="small" data-stickers="none" aria-pressed="true">なし</button>
+        <button type="button" class="small" data-stickers="doodle" aria-pressed="false">手描きの記号だけ</button>
+        <button type="button" class="small" data-stickers="all" aria-pressed="false">全部（シール・紙ものも）</button>
+      </div>
+      <p class="hint">使う書体（押すと出なくなります）</p>
+      <div class="row faces" id="fonts" role="group" aria-label="使う書体"></div>
+      <p class="hint">使う世界（場面ごとに切り替わる背景と色。見る段のテーマもここを書き換えます）</p>
+      <div class="row">
+        <button type="button" class="small" id="worldMode" aria-pressed="false">押すと：出なくする</button>
+        <button type="button" class="small" id="worldAll">全部に戻す</button>
+      </div>
+      <div class="row worlds" id="worlds" role="group" aria-label="使う世界"></div>
+    </section>
+
+    <section>
+      <h2>消した演出</h2>
+      <p class="sub">押すと元に戻ります。このブラウザに覚えます。「ここだけ」で消したものは、いまの案にだけ効きます（「もう一案」では効きません）。</p>
+      <div class="removed" id="removed-box"></div>
+      <div class="row">
+        <button type="button" class="small" id="removed-clear">全部戻す</button>
+        <button type="button" class="small" id="removed-copy">消したものをコピー</button>
+      </div>
+      <textarea id="removed-json" class="json" readonly rows="4" aria-label="消した演出（JSON）"></textarea>
+    </section>
+
+    <section>
+      <h2>直した行</h2>
+      <p class="sub">押すとその行へ移って、続けて直せます。このブラウザに覚え、「もう一案」で作り直しても残ります（歌詞が変わった行には効きません）。</p>
+      <div class="edited" id="edited-box"></div>
+      <div class="row">
+        <button type="button" class="small" id="edits-undo" disabled>ひとつ戻す</button>
+        <button type="button" class="small" id="edits-clear">全部戻す</button>
+        <button type="button" class="small" id="edits-copy">直したものをコピー</button>
+      </div>
+      <textarea id="edits-json" class="json" readonly rows="4" aria-label="直した行（JSON）"></textarea>
+    </section>
+
+    <section>
+      <details id="tuning" open>
+        <summary><h2>調整</h2></summary>
+        <p class="sub">つまみを動かすと、すぐ絵に反映されます。値はこのブラウザに覚えます。</p>
+        <div id="tuning-rows" class="tune"></div>
+        <div class="row">
+          <button type="button" class="small" id="tune-reset">初期値に戻す</button>
+          <button type="button" class="small" id="tune-copy">この値をコピー</button>
+        </div>
+        <textarea id="tune-json" class="json" readonly rows="6" aria-label="いまの調整値（JSON）"></textarea>
+      </details>
+    </section>
+
+    <section>
+      <h2>台本</h2>
+      <div class="summary" id="summary">解析結果を選ぶと表示されます。</div>
+    </section>
+  </details>
+</div>
+<script>if (location.protocol === 'file:') document.getElementById('filewarn').hidden = false;</script>
+<script type="module" src="./play-check.js"></script>
+</body>
+</html>

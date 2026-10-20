@@ -1,0 +1,9 @@
+{
+  "appId": "com.maosundev.lyrivue",
+  "appName": "Lyrivue",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#241A36"
+  }
+}
