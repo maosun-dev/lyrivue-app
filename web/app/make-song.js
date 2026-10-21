@@ -13,6 +13,10 @@ const here = p => new URL(p, import.meta.url).href;
 /** iPhone・iPad か（Whisper が落ちるので、AI の初期値を「使わない」にする） */
 export const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+/** 「AI で歌に合わせる」を最初からオンにするか。iPhone の Safari ではウェブの AI が落ちるのでオフ。
+ * iPhone アプリは iPhone 本体の whisper.cpp（window.lyrivueWhisper）で聞けるのでオン（2026-10-21 持ち主の iPhone 12 mini で確かめた） */
+export const aiOnByDefault = ({ ios = isIOS(), native = globalThis.lyrivueWhisper } = {}) => !ios || !!native;
+
 // AI は一度読めば、ページを開き直すまで使い回す（失敗したら次に押したとき読み直す）
 let transcriberPromise = null;
 

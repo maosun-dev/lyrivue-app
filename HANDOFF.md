@@ -16,7 +16,7 @@
 
 ## アプリだけの違い（tools/build-www.mjs・js/app-native.css・js/app-native.js）
 - Google Fonts → 中に入れた書体（fonts/）。辞書（kuromoji）と動画の部品（mp4-muxer）も中に入れる（電波なしで動く）
-- AI の歌合わせ：iPhone 本体の whisper.cpp で聞く（2026-10-21〜。ウェブの AI は iPhone 12 mini で記憶が足りず落ちた）。自作プラグイン plugins/whisper/（npm の file: 依存。`npx cap sync ios` が自動で取り込む）、whisper.cpp v1.9.2 の公式 iPhone 用部品を SPM で。AI のデータ ggml-base-q5_1.bin（57MB）は初めて使うときに Hugging Face から Application Support/whisper/ へ。js/app-native.js が window.lyrivueWhisper として画面に出し、画面（app/make-song.js）が曲を 15 秒ずつ切って渡す。iPhone の初期値はオフ
+- AI の歌合わせ：iPhone 本体の whisper.cpp で聞く（2026-10-21〜。ウェブの AI は iPhone 12 mini で記憶が足りず落ちた）。自作プラグイン plugins/whisper/（npm の file: 依存。`npx cap sync ios` が自動で取り込む）、whisper.cpp v1.9.2 の公式 iPhone 用部品を SPM で。AI のデータ ggml-base-q5_1.bin（57MB）は初めて使うときに Hugging Face から Application Support/whisper/ へ。js/app-native.js が window.lyrivueWhisper として画面に出し、画面（app/make-song.js）が曲を 15 秒ずつ切って渡す。iPhone アプリでは最初からオン（iPhone の Safari ではオフ）
 - アプリの対応は iOS 16.4 から（whisper.cpp の部品に合わせた）
 - 作る側の道具・いつもの曲は隠す
 - 動画の保存は iPhone の「共有」の画面（「ビデオを保存」で写真へ）

@@ -13,7 +13,7 @@ import { THEMES, themeWorlds, themeOf } from './themes.js';
 import { CAMS, TILTS, SIZES, normalizeEdits, describeEdit } from '../director/edits.js';
 import { cameraAt, project, projectPlane } from '../render/camera.js';
 import { CAM_ICONS, TILT_ICONS, NUDGE_ICONS, ARROW_ICONS } from './edit-icons.js';
-import { makeSong, MAKE_STEPS, isIOS } from './make-song.js';
+import { makeSong, MAKE_STEPS, aiOnByDefault } from './make-song.js';
 import { retimeLines, tapMoment } from '../analyze/retime.js';
 import { exportPlan, exportFileName, exportMode } from '../export/plan.js';
 import { canEncode, canEncodeAudio, canRecord, encodeVideo, recordVideo, decodeForExport, saveBlob } from '../export/video.js';
@@ -1290,7 +1290,7 @@ cv.addEventListener('wheel', e => {
 }, { passive: false });
 
 // ---- 新しい曲で作る（app/make-song.js） ----
-const nsAI = { on: !isIOS() }; // iPhone・iPad では AI が落ちるので、初期値を「使わない」に
+const nsAI = { on: aiOnByDefault() }; // iPhone・iPad の Safari では AI が落ちるので「使わない」に（iPhone アプリは whisper.cpp で聞けるので「使う」）
 function showNsAI() {
   $('ns-ai').setAttribute('aria-pressed', String(nsAI.on));
   $('ns-ai').textContent = `AI で歌に合わせる：${nsAI.on ? 'オン' : 'オフ'}`;

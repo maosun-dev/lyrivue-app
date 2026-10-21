@@ -1,1 +1,1 @@
-../Lyrivue のコミット 51d67e3 iPhone アプリでは iPhone 本体の whisper.cpp（window.lyrivueWhisper）で歌を聞く から写した（138 ファイル）
+../Lyrivue のコミット fce66b2 iPhone アプリでは「AI で歌に合わせる」を最初からオンにする（iPhone の Safari はオフのまま） から写した（138 ファイル）
