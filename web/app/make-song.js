@@ -6,6 +6,7 @@ import { analyzeSong } from '../analyze/index.js';
 import { lyricsLanguage, parseLyrics } from '../analyze/lyrics.js';
 import { japaneseParts, fromRawTokenizer, lightRawTokenize } from '../analyze/japanese-core.js';
 import { createEnglish } from '../analyze/english.js';
+import { transcribeInChunks } from '../analyze/whisper-chunks.js';
 
 const here = p => new URL(p, import.meta.url).href;
 
@@ -129,6 +130,22 @@ function loadTranscriber(onRatio, log = () => {}) {
   return transcriberPromise;
 }
 
+/**
+ * iPhone アプリの中では、iPhone 本体の whisper.cpp（lyrivue-app の js/app-native.js が出す window.lyrivueWhisper）で聞く。
+ * ウェブの AI は iPhone 12 mini では記憶が足りず、歌を聞いて 20 秒ほどで落ちた（2026-10-21。WebKit で測ると 1.0〜1.3GB）。
+ * 曲は 15 秒ずつ切って 1 切れずつ渡す（analyze/whisper-chunks.js）。形はウェブの AI の係と同じ
+ * @param {{prepare(onRatio?:(ratio:number,total:number)=>void):Promise<void>, transcribeChunk(mono:Float32Array, language:string):Promise<{text:string,start:number,end:number}[]>, release():Promise<void>}} native
+ */
+export async function loadNativeTranscriber(native, onRatio, log = () => {}) {
+  log('AI：iPhone 本体（whisper.cpp）');
+  await native.prepare((r, total) => onRatio?.(r, total));
+  log('AI の準備ができた');
+  return {
+    dispose() { Promise.resolve(native.release()).catch(e => log(`AI を手放せなかった：${e?.message ?? e}`)); },
+    transcribe: (mono16k, onProgress, language) => transcribeInChunks(mono16k, c => native.transcribeChunk(c, language), onProgress, log),
+  };
+}
+
 // 読み込みがいつまでも終わらないとき（どこかで止まって返事が来ない）、待つのをやめて先へ進む
 function within(promise, sec, what) {
   let timer = 0;
@@ -218,7 +235,9 @@ export async function makeSong({ file, lyrics, useAI, onStep, onLog }) {
         let ai = null;
         try {
           let lastMove = performance.now();
-          const loading = loadTranscriber((r, total) => { lastMove = performance.now(); step('model', r, `${(total / 1048576).toFixed(0)} MB`); }, log);
+          const onRatio = (r, total) => { lastMove = performance.now(); step('model', r, `${(total / 1048576).toFixed(0)} MB`); };
+          const native = globalThis.lyrivueWhisper;
+          const loading = native ? loadNativeTranscriber(native, onRatio, log) : loadTranscriber(onRatio, log);
           // データの読み込みが 90 秒進まなければあきらめる（ダウンロード中は進むので待つ）
           const stall = new Promise((_, reject) => {
             const id = setInterval(() => { if (performance.now() - lastMove > 90_000) { clearInterval(id); reject(new Error('AI のデータの読み込みが 90 秒進みませんでした')); } }, 1000);

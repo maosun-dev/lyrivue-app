@@ -16,6 +16,7 @@
     "@capacitor/ios": "8.5.2",
     "@capacitor/share": "8.0.3",
     "kuromoji": "0.1.2",
+    "lyrivue-whisper": "file:plugins/whisper",
     "mp4-muxer": "5.2.2"
   },
   "devDependencies": {

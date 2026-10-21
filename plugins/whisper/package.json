@@ -1,0 +1,11 @@
+{
+  "name": "lyrivue-whisper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lyrivue の iPhone アプリで、歌を whisper.cpp（iPhone 本体）で聞き取る自作プラグイン",
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  }
+}

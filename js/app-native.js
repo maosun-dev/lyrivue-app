@@ -49,4 +49,26 @@ window.claude = {
     return null;
   },
 };
+/* ---------- AI の聞き取りを iPhone 本体の whisper.cpp で（自作プラグイン LyrivueWhisper、plugins/whisper/） ----------
+ * ウェブの AI は iPhone 12 mini では記憶が足りず、歌を聞いて 20 秒ほどで落ちた（2026-10-21）。
+ * 画面（Lyrivue の app/make-song.js）は window.lyrivueWhisper があればそれで聞く。曲は画面の側で 15 秒ずつに切って 1 切れずつ渡す
+ */
+if (cap.isPluginAvailable && cap.isPluginAvailable('LyrivueWhisper')) {
+  const Whisper = cap.registerPlugin('LyrivueWhisper');
+  window.lyrivueWhisper = {
+    // AI のデータ（57MB）が無ければ読み込んでから、AI を読む。onRatio(割合, 全体のバイト数)
+    async prepare(onRatio) {
+      const listener = await Whisper.addListener('progress', p => { if (p && p.total) onRatio && onRatio(p.loaded / p.total, p.total); });
+      try { await Whisper.prepare(); } finally { await listener.remove(); }
+    },
+    // 16kHz・1ch の音（Float32Array）→ 言葉ごとの時刻 [{text, start, end}]（秒・切れの頭から）
+    async transcribeChunk(mono, language) {
+      const bytes = new Uint8Array(mono.buffer, mono.byteOffset, mono.byteLength);
+      const { tokens } = await Whisper.transcribe({ audio: base64(bytes), language: language === 'english' ? 'en' : 'ja' });
+      return tokens || [];
+    },
+    // AI を手放す（データはアプリの中に残る）
+    release() { return Whisper.release(); },
+  };
+}
 })();
