@@ -1,6 +1,7 @@
 // 台本係：解析結果（AnalysisResult）から台本（Script）を作る。例外は投げない。
 // 乱数は makeRng(seed) 1本を、「色と書体 → 場面ごと／行ごとの選び」の順に使う。
 // この順番が変わると同じ種でも台本が変わる。
+import { applyPlaces } from './places.js';
 import { makeRng, pick } from './rng.js';
 import { chooseStyle } from './style.js';
 import { sectionIntensity, stretch } from './intensity.js';
@@ -35,7 +36,8 @@ const PRE_NAME = /pre|プレ|Aメロ|Bメロ/i; // Pre-Chorus（サビの前）�
 export function buildScript(analysis, opts) {
   const seed = Number.isFinite(opts?.seed) ? opts.seed : 1;
   const rng = makeRng(seed);
-  const a = trimSlowFirstLine(analysis ?? {});
+  // ここから場所を変える（持ち主が行ごとに決めた区切り。director/places.js）を先に掛けて、区切りを作り直す
+  const a = trimSlowFirstLine(applyPlaces(analysis ?? {}, opts?.edits));
   const duration = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : 0;
   const lines = Array.isArray(a.lines) ? a.lines : [];
   const style = chooseStyle(a, rng);

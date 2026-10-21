@@ -2,7 +2,9 @@
 // edits = { lines: { [行の番号]: { text, emph?, cam?, size?, tilt?, variant? } } }
 //   text：直したときの歌詞（今の歌詞と違えば効かせない）。emph：[はじめ, 長さ]（文字の番号。Array.from で数える）か 'none'。
 //   cam：カメラの来かた（CAMS）。size：大きさの倍率（SIZES）。tilt：板の傾き（TILTS）。variant：この行だけもう一案の番号（1〜）
+//   place：ここから場所を変える（director/places.js の PLACE_KINDS。台本を作る前に区切りを作り直す）
 // 台本を作り終えたあとに書き換えるので、ほかの行の置き場所・カメラ・演出、乱数を引く順は変わらない。効くのは S の場面の行だけ。
+import { PLACE_KINDS } from './places.js';
 import { makeRng } from './rng.js';
 import { viewPose, dirOf, stayWindow, placeProps, arriveIndexOf } from './space.js';
 import { VIEW_DIST } from './layout.js';
@@ -65,10 +67,14 @@ export function normalizeEdits(edits) {
       c.move = e.move.map(v => Math.min(MOVE_MAX, Math.max(-MOVE_MAX, v)));
     }
     if (Number.isFinite(e.roll) && Math.abs(e.roll) > 1e-6) c.roll = Math.min(ROLL_MAX, Math.max(-ROLL_MAX, e.roll));
+    if (typeof e.place === 'string' && e.place in PLACE_KINDS) c.place = e.place; // ここから場所を変える（director/places.js）
     if (Object.keys(c).length > 1) out.lines[key] = c;
   }
   return out;
 }
+
+/** ここから場所を変えるの種類の名前（画面に出す名前） */
+export const PLACE_NAMES = { verse: 'A メロ', bridge: 'つなぎ', chorus: 'サビ', outro: '終わり', none: '変えない' };
 
 /** 直した項目の日本語の名前 */
 export function describeEdit(e) {
@@ -82,6 +88,7 @@ export function describeEdit(e) {
   if (Array.isArray(e.move)) out.push('位置：ずらした');
   if (Number.isFinite(e.roll)) out.push(`回転：${e.roll > 0 ? '右へ' : '左へ'}${Math.round(Math.abs(e.roll) * 180 / Math.PI)}°`);
   if (e.variant) out.push(`もう一案：案${e.variant + 1}`);
+  if (e.place) out.push(e.place === 'none' ? '場所：ここでは変えない' : `場所：ここから${PLACE_NAMES[e.place]}`);
   return out;
 }
 

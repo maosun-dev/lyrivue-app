@@ -57,3 +57,15 @@ export const ARROW_ICONS = {
   prev: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2L4 6l4 4"/></svg>',
   next: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2l4 4-4 4"/></svg>',
 };
+
+// ここから場所を変える：旅の道すじに立てた旗（変わる所）と、その先の地形（A メロ＝なだらか・つなぎ＝のぼり坂・サビ＝高い山並み・終わり＝沈む日）
+const gate = (dashed = false) => `<path d="M13 5v21"${dashed ? ' stroke-dasharray="2 2.4"' : ''}/><path d="M13 5h8l-2.4 2.6 2.4 2.6h-8" fill="currentColor" fill-opacity=".18"${dashed ? ' stroke-dasharray="2 2.4"' : ''}/>`;
+const road = '<path d="M2 24H13"/>';
+export const PLACE_ICONS = {
+  auto: svg(road + gate() + '<path d="M13 24H42" stroke-dasharray="2.5 2.5"/>' + spark(32, 14)),
+  verse: svg(road + gate() + '<path d="M13 24 Q19 19 25 23 T37 22 T42 21"/>'),
+  bridge: svg(road + gate() + '<path d="M13 24h6v-4h6v-4h6v-4h7"/>'),
+  chorus: svg(road + gate() + '<path d="M13 24L18 11L22 20L28 4L33 18L37 10L42 24Z" fill="currentColor" fill-opacity=".18"/>'),
+  outro: svg(road + gate() + '<path d="M13 24H42"/><path d="M24 24 A7 7 0 0 1 38 24" fill="currentColor" fill-opacity=".18"/><path d="M31 13v-3M23.5 16.5l-2-2M38.5 16.5l2-2" stroke-width="1.2"/>'),
+  none: svg('<path d="M2 24H42"/>' + gate(true) + '<path d="M8 9l11 11M19 9L8 20" stroke-width="1.3"/>'),
+};

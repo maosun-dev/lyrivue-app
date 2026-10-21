@@ -201,6 +201,8 @@
   .ic[aria-pressed=true] { border-color: var(--lilac); color: var(--lilac); background: color-mix(in srgb, var(--lilac) 12%, var(--night)); }
   .ic:hover { color: var(--cream); }
   .ic[aria-pressed=true]:hover { color: var(--lilac); }
+  .icons.places { grid-template-columns: repeat(6, 1fr); }
+  @media (max-width: 520px) { .icons.places { grid-template-columns: repeat(3, 1fr); } }
   .sizes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; align-items: stretch; }
   .sz { display: grid; align-content: end; justify-items: center; gap: 4px; border: 1px solid var(--dusk-line); background: var(--night); color: var(--cream); border-radius: 10px; padding: 8px 2px 7px; cursor: pointer; min-height: 78px; }
   .sz span { font: 800 16px/1 "Shippori Mincho B1", serif; white-space: nowrap; }
@@ -375,7 +377,7 @@
     <section>
       <details class="fold" id="tap-fold">
         <summary><h2>歌とずれていたら：タップで合わせる</h2></summary>
-        <p class="sub">曲を流しながら、各行の歌い出しで「いま」を押します（パソコンはスペースキーでも）。途中でやめても、押したところまで使えます。</p>
+        <p class="sub">ずれている行を「始める行」で選び、歌い出しで「いま」を押します。AI の時刻なら、押した行だけ動き、ほかの行はそのままです。全部合わせ直すときは、最初の行から押していきます。</p>
         <div class="row">
           <button type="button" class="small" id="tap-start" disabled>合わせ始める</button>
         </div>

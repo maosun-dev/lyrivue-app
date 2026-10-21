@@ -28,7 +28,9 @@ export function retimeLines(result, taps) {
   }
   if (tapped.size === 0) return { ...result, lines: lines.map(l => ({ ...l })) };
 
-  // 歌い出し：たたいた行はその時刻。間の行は前の間隔の比で割り振り、後ろの行は最後のずれの分だけずらす
+  // 歌い出し：たたいた行はその時刻。間の行は前の間隔の比で割り振る。
+  // 後ろの行：AI の時刻なら合っているので動かさない（一部分だけ直す。2026-10-21 持ち主「全部その秒数うしろにいっちゃう」）。
+  // ざっくりの時刻（usedFallback）のときだけ、最後のずれの分だけまとめてずらす
   const keys = [...tapped.keys()].sort((a, b) => a - b);
   const start = old.slice();
   for (const k of keys) start[k] = tapped.get(k);
@@ -41,7 +43,7 @@ export function retimeLines(result, taps) {
     }
   }
   const last = keys[keys.length - 1];
-  const shift = start[last] - old[last];
+  const shift = result.usedFallback ? start[last] - old[last] : 0;
   for (let i = last + 1; i < n; i++) start[i] = old[i] + shift;
   // たたいた行より前の行は、たたいた行を越えないように（越えた分だけ前へ詰める）
   for (let i = keys[0] - 1; i >= 0; i--) start[i] = Math.min(start[i], start[i + 1] - MIN_STEP);

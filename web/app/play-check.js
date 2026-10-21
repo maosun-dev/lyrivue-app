@@ -8,11 +8,11 @@ import { saveFile, loadFile, forgetAll } from './store.js';
 import { TUNING_RANGES, resolveTuning } from '../shared/tuning.js';
 import { effectsAt, applyRemovals, normalizeRemoved } from '../director/removals.js';
 import { TYPEFACES, DRAWN_BOX } from '../render/parts/text-motion.js';
-import { WORLDS } from '../director/worlds.js';
+import { WORLDS, sectionKind } from '../director/worlds.js';
 import { THEMES, themeWorlds, themeOf } from './themes.js';
-import { CAMS, TILTS, SIZES, normalizeEdits, describeEdit } from '../director/edits.js';
+import { CAMS, TILTS, SIZES, normalizeEdits, describeEdit, PLACE_NAMES } from '../director/edits.js';
 import { cameraAt, project, projectPlane } from '../render/camera.js';
-import { CAM_ICONS, TILT_ICONS, NUDGE_ICONS, ARROW_ICONS } from './edit-icons.js';
+import { CAM_ICONS, TILT_ICONS, NUDGE_ICONS, ARROW_ICONS, PLACE_ICONS } from './edit-icons.js';
 import { makeSong, MAKE_STEPS, aiOnByDefault } from './make-song.js';
 import { retimeLines, tapMoment } from '../analyze/retime.js';
 import { exportPlan, exportFileName, exportMode } from '../export/plan.js';
@@ -986,6 +986,26 @@ function showEditPanel() {
   head.append(title, tools, row1, row2);
   box.append(head);
 
+  // ここから場所を変える（director/places.js）：この行から先の区切りの種類。同じ種類は同じ場所に戻り、サビは派手な場所
+  const sc = found.scene;
+  const worldName = WORLDS.find(w => w.id === sc?.world)?.name;
+  const kindName = PLACE_NAMES[sectionKind(sc?.section)];
+  const pl = block('ここから場所を変える', worldName ? `いまは ${worldName}${kindName ? `（${kindName}）` : ''}` : '');
+  const plRow = el('div', 'icons places');
+  for (const key of ['auto', 'verse', 'bridge', 'chorus', 'outro', 'none']) {
+    const name = key === 'auto' ? 'おまかせ' : PLACE_NAMES[key];
+    const b = btn('ic', null, `place-${key}`, () => {
+      setEdit(i, { place: key === 'auto' ? null : key });
+      say(key === 'auto' ? `${i + 1}行目の場所の区切りを、おまかせに戻しました。` : key === 'none' ? `${i + 1}行目では場所を変えないようにしました。` : `${i + 1}行目から先を「${name}」の場所にしました。`);
+    });
+    b.innerHTML = PLACE_ICONS[key];
+    b.append(el('span', '', name));
+    b.setAttribute('aria-pressed', String((e.place ?? 'auto') === key));
+    plRow.append(b);
+  }
+  pl.append(plRow, el('p', 'ed-note', 'この行から先の場所が変わります（次に場所を変える所まで）。同じ種類にした所は同じ場所に戻り、サビは派手な場所になります。'));
+  box.append(pl);
+
   // ① 強調する文字：はじめの文字 → おわりの文字の順に押す
   const em = block('強調する文字', state.emphFrom !== null ? 'おわりの文字を押してください' : 'はじめとおわりの文字を押します');
   const row = el('div', 'chars');
@@ -1438,7 +1458,10 @@ $('tap-start').addEventListener('click', () => {
   $('tap-box').hidden = false;
   $('tap-start').hidden = true;
   fillTapFrom();
-  tapFrom(0);
+  // AI の時刻なら一部分だけ直すことが多いので、いま見ている所の行から（ざっくりの時刻なら最初の行から）
+  const t0 = now();
+  const here = state.analysis.usedFallback ? 0 : Math.max(0, tapLines().findLastIndex(l => l.start <= t0));
+  tapFrom(here);
   $('tap-hit').focus();
 });
 $('tap-from').addEventListener('change', e => tapFrom(Number(e.target.value)));
@@ -1457,12 +1480,6 @@ function tapHit(e) {
 // 指を置いた瞬間に数える（離すまで待つと、その分遅れる）
 $('tap-hit').addEventListener('pointerdown', e => { e.preventDefault(); tapHit(e); });
 $('tap-hit').addEventListener('keydown', e => { if ((e.key === 'Enter') && !e.repeat) { e.preventDefault(); tapHit(e); } });
-document.addEventListener('keydown', e => {
-  if (!tap.on || e.key !== ' ' || e.repeat) return;
-  if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '')) return;
-  e.preventDefault();
-  tapHit(e);
-});
 $('tap-undo').addEventListener('click', () => {
   const last = tap.taps.pop();
   if (!last) return;
@@ -1485,8 +1502,9 @@ $('tap-done').addEventListener('click', async () => {
   const keepTouched = state.touched.analysis;
   state.touched.analysis = true;
   if (await applyAnalysis(new File([JSON.stringify(fixed)], name, { type: 'application/json' }), true)) {
-    say(`${n} 行の時刻を、タップに合わせました。再生して確かめてください。`);
-    $('view-msg').textContent = `${n} 行の時刻を、タップに合わせました。再生して確かめてください。`;
+    const msg = `${n} 行の時刻を、タップに合わせました${fixed?.usedFallback ? '' : '（ほかの行はそのまま）'}。再生して確かめてください。`;
+    say(msg);
+    $('view-msg').textContent = msg;
   } else state.touched.analysis = keepTouched;
 });
 
