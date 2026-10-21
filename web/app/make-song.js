@@ -95,6 +95,8 @@ function loadTranscriber(onRatio, log = () => {}) {
         ready = true;
         log('AI の準備ができた');
         resolve({
+          // 作業場を閉じて AI の記憶を返す（次に使うときは読み直す。iPhone では AI を抱えたまま次の重い処理をすると落ちた）
+          dispose() { transcriberPromise = null; worker.terminate(); },
           // analyzeSong が呼ぶ聞き取り係と同じ形（16kHz・1ch の音 → 言葉ごとの時刻）
           transcribe(mono16k, onProgress, language) {
             onProgress?.(0);
@@ -166,9 +168,9 @@ const paint = () => new Promise(resolve => {
 /** 進み具合の段階（画面に出す順） */
 export const MAKE_STEPS = [
   { key: 'dict', label: '辞書' },
-  { key: 'model', label: 'AI のデータ' },
   { key: 'decode', label: '曲を読む' },
   { key: 'tempo', label: '拍' },
+  { key: 'model', label: 'AI のデータ' },
   { key: 'listen', label: '歌を聞く' },
   { key: 'align', label: '時刻' },
 ];
@@ -203,29 +205,48 @@ export async function makeSong({ file, lyrics, useAI, onStep, onLog }) {
     step('dict', 1, '簡単');
   }
 
+  // AI は「歌を聞く」直前に読み込み、聞き終わったら手放す。曲を広げる・拍を調べるのと同時に記憶へ乗せないため
+  // （2026-10-21 持ち主の iPhone 12 mini：AI のデータを読んだあと、154 秒の wav を読み終えた所でアプリが落ちた）
   let transcriber = null;
-  if (useAI && japanese && !noDict && String(lyrics ?? '').trim()) {
-    step('model', 0); await paint();
-    try {
-      let lastMove = performance.now();
-      const loading = loadTranscriber((r, total) => { lastMove = performance.now(); step('model', r, `${(total / 1048576).toFixed(0)} MB`); }, log);
-      // データの読み込みが 90 秒進まなければあきらめる（ダウンロード中は進むので待つ）
-      const stall = new Promise((_, reject) => {
-        const id = setInterval(() => { if (performance.now() - lastMove > 90_000) { clearInterval(id); reject(new Error('AI のデータの読み込みが 90 秒進みませんでした')); } }, 1000);
-        loading.finally(() => clearInterval(id)).catch(() => {});
-      });
-      const ai = await Promise.race([loading, stall]);
-      // 歌詞が英語なら、AI にも英語として聞かせる（日本語のままだとカタカナに聞き違える）
-      const language = lyricsLanguage(lyrics);
-      // 聞き取った言葉の読みも辞書で調べてから合わせる（辞書は別の作業場なので、合わせる前に区切っておく）
-      transcriber = { transcribe: async (m, p) => { const words = await ai.transcribe(m, p, language); if (dict) await dict.add(words.map(w => w.text)); return words; } };
-      step('model', 1);
-    } catch (e) {
-      log(`AI を使えない：${e?.message ?? e}`);
-      notes.push(`AI を読み込めなかったので、代わりの合わせ方で時刻を付けました（${e?.message ?? e}）。「タップで合わせる」で直せます`);
-      step('model', 1, 'なし');
-    }
+  const wantAI = useAI && japanese && !noDict && String(lyrics ?? '').trim();
+  if (wantAI) {
+    // 歌詞が英語なら、AI にも英語として聞かせる（日本語のままだとカタカナに聞き違える）
+    const language = lyricsLanguage(lyrics);
+    transcriber = {
+      async transcribe(m, p) {
+        step('model', 0); await paint();
+        let ai = null;
+        try {
+          let lastMove = performance.now();
+          const loading = loadTranscriber((r, total) => { lastMove = performance.now(); step('model', r, `${(total / 1048576).toFixed(0)} MB`); }, log);
+          // データの読み込みが 90 秒進まなければあきらめる（ダウンロード中は進むので待つ）
+          const stall = new Promise((_, reject) => {
+            const id = setInterval(() => { if (performance.now() - lastMove > 90_000) { clearInterval(id); reject(new Error('AI のデータの読み込みが 90 秒進みませんでした')); } }, 1000);
+            loading.finally(() => clearInterval(id)).catch(() => {});
+          });
+          ai = await Promise.race([loading, stall]);
+          step('model', 1);
+          step('listen', 0); // 表示を「歌を聞く」に戻す（AI のデータは歌を聞く段の中で読む）
+        } catch (e) {
+          log(`AI を使えない：${e?.message ?? e}`);
+          notes.push(`AI を読み込めなかったので、代わりの合わせ方で時刻を付けました（${e?.message ?? e}）。「タップで合わせる」で直せます`);
+          step('model', 1, 'なし');
+          aiFailed = true;
+          throw e; // analyzeSong が代わりの合わせ方へ進む
+        }
+        try {
+          const words = await ai.transcribe(m, p, language);
+          // 聞き取った言葉の読みも辞書で調べてから合わせる（辞書は別の作業場なので、合わせる前に区切っておく）
+          if (dict) await dict.add(words.map(w => w.text));
+          return words;
+        } finally {
+          ai.dispose?.();
+          log('AI を手放した');
+        }
+      },
+    };
   } else step('model', 1, '使わない');
+  let aiFailed = false;
 
   step('decode', 0); await paint();
   const { mono, sampleRate } = await decodeMono(file); // 曲が読めないときだけは止める（MV にできないので）
@@ -245,7 +266,7 @@ export async function makeSong({ file, lyrics, useAI, onStep, onLog }) {
       if (s === 'listen' && r === 1) { clearInterval(listenTimer); }
     },
   }).finally(() => clearInterval(listenTimer));
-  if (analysis.usedFallback && transcriber) notes.push('AI がうまく聞き取れなかったので、代わりの合わせ方で時刻を付けました。「タップで合わせる」で直せます');
+  if (analysis.usedFallback && transcriber && !aiFailed) notes.push('AI がうまく聞き取れなかったので、代わりの合わせ方で時刻を付けました。「タップで合わせる」で直せます');
   if (analysis.usedFallback && !transcriber && !notes.length && useAI === false) notes.push('時刻はざっと付けてあります。「タップで合わせる」で合わせると、ぴったりになります');
   return { analysis, notes };
 }

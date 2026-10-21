@@ -1,1 +1,1 @@
-../Lyrivue のコミット 5ae3f00 AI の計算の部品（ONNX Runtime の wasm・mjs）の置き場所を、読み込みの決まり（import map の ort-wasm/）で決める から写した（137 ファイル）
+../Lyrivue のコミット c75fbb4 AI は歌を聞く直前に読み込み、聞き終わったら手放す（iPhone で AI のデータを読んだあと曲を読み終えた所で落ちた件） から写した（137 ファイル）
