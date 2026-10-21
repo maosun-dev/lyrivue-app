@@ -17,6 +17,9 @@ export async function createTranscriberWith(lib, { model = 'onnx-community/whisp
   }
   const asr = await lib.pipeline('automatic-speech-recognition', model, {
     dtype: 'q8',
+    // 計算の部品が記憶をまとめて確保しておく仕組みを切る（結果は同じ）。iPhone 12 mini で歌を聞いて 20 秒ほどで落ちた
+    // （2026-10-21。WebKit で測ると聞いている間の山が 1.1〜1.7GB → 1.0〜1.3GB に下がった）
+    session_options: { enableCpuMemArena: false, enableMemPattern: false },
     progress_callback: onProgress,
   });
   fixTokenTimestampFrames(asr.model, lib.env?.version);
