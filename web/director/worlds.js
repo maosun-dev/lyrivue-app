@@ -162,9 +162,10 @@ const PAPER_ORDER = ['day', 'dusk', 'night', 'dawn', 'old']; // 紙に戻るた�
  * @param {string[]} names 場面ごとの区切りの名前
  * @param {number[]} intensities 場面ごとの強さ（名前の読めない区切りに使う）
  * @param {number} seed
- * @param {{worlds?:string[], paperTimes?:string[], texts?:string[], ending?:'bright'|'stay'|'sky'}} [opts] worlds：使ってよい世界。paperTimes：紙に戻るたびに使う時間の順。
+ * @param {{worlds?:string[], paperTimes?:string[], texts?:string[], ending?:'bright'|'stay'|'sky', placeWorlds?:{verse?:string,bridge?:string,chorus?:string}}} [opts] worlds：使ってよい世界。paperTimes：紙に戻るたびに使う時間の順。
  *   texts：場面ごとの歌詞（区切りの種類ごとにまとめ、言葉に合う世界を選びやすくする）。
- *   ending：最後の世界。bright（初期）・stay は Outro も直前の世界のまま（bright は描くときに夜明けの配色。dawnInk）、sky は空と線画へ抜ける
+ *   ending：最後の世界。bright（初期）・stay は Outro も直前の世界のまま（bright は描くときに夜明けの配色。dawnInk）、sky は空と線画へ抜ける。
+ *   placeWorlds：区切りの種類ごとに持ち主が選んだ世界（同じ種類の区切り全部に効く）
  * @returns {{worlds:string[], times:(string|null)[], open:string|null, ending:string}}
  */
 export function planJourney(names, intensities, seed, opts) {
@@ -181,9 +182,17 @@ export function planJourney(names, intensities, seed, opts) {
     return cands[cands.length - 1]?.id;
   };
   // 場所を決める（決まった順に乱数を引く）：A メロ → つなぎ → サビ。前に決めた場所は避ける（候補が尽きたら性格を問わず、それも尽きたら重ねてよい）
-  const used = new Set();
+  // 持ち主が旅程の行から選んだ場所の世界（2026-10-22）。A メロ・つなぎ・サビだけ受け付け、使う世界（worlds）の外でもよい。
+  // 先に使ったことにして、ほかの種類はそれを避けて選ぶ
+  const fixed = {};
+  for (const kind of ['verse', 'bridge', 'chorus']) {
+    const id = opts?.placeWorlds?.[kind];
+    if (WORLDS.some(w => w.id === id)) fixed[kind] = id;
+  }
+  const used = new Set(Object.values(fixed));
   const kindsAll = list.map(sectionKind);
   const placeFor = kind => {
+    if (fixed[kind]) return fixed[kind];
     const energy = KIND_ENERGY[kind];
     // この種類の区切りの歌詞に出てくる言葉の世界。言葉が合っても、種類に合わない派手さの世界は選ばない
     // （A メロ・つなぎは静か〜中くらい、サビは派手な世界だけ）

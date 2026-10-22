@@ -10,6 +10,8 @@ import { effectsAt, applyRemovals, normalizeRemoved } from '../director/removals
 import { TYPEFACES, DRAWN_BOX } from '../render/parts/text-motion.js';
 import { WORLDS, sectionKind } from '../director/worlds.js';
 import { THEMES, themeWorlds, themeOf } from './themes.js';
+import { journeyRows, rowAt, worldSwatch } from './journey-view.js';
+import { openSheet, closeSheet, onSheetClose } from './sheet.js';
 import { CAMS, TILTS, SIZES, normalizeEdits, describeEdit, PLACE_NAMES } from '../director/edits.js';
 import { cameraAt, project, projectPlane } from '../render/camera.js';
 import { CAM_ICONS, TILT_ICONS, NUDGE_ICONS, ARROW_ICONS, PLACE_ICONS } from './edit-icons.js';
@@ -57,6 +59,24 @@ function loadWorlds() {
     return ok.length ? ok : [...WORLD_KEYS];
   } catch { return [...WORLD_KEYS]; }
 }
+// 場所ごとに選んだ世界（2026-10-22）：曲ごとに覚える（別の曲を読んだら消す）。{ song: 曲のしるし, places: { verse?, bridge?, chorus? } }
+function loadPlaceWorlds() {
+  try {
+    const v = JSON.parse(localStorage.getItem('lyrivue-place-worlds') ?? 'null');
+    const places = {};
+    for (const k of ['verse', 'bridge', 'chorus']) if (WORLD_KEYS.includes(v?.places?.[k])) places[k] = v.places[k];
+    return { song: typeof v?.song === 'string' ? v.song : '', places };
+  } catch { return { song: '', places: {} }; }
+}
+function savePlaceWorlds(pw) { try { localStorage.setItem('lyrivue-place-worlds', JSON.stringify(pw)); } catch { /* 覚えなくても動く */ } }
+// 曲のしるし：行の数と歌詞の頭（タップで合わせ直しても同じ曲のまま）
+const songSig = a => `${a?.lines?.length ?? 0}:${(a?.lines ?? []).map(l => String(l.text ?? '')).join('|').slice(0, 300)}`;
+function usePlacesFor(a) {
+  const sig = songSig(a);
+  if (state.placeWorlds.song === sig) return;
+  state.placeWorlds = { song: sig, places: {} };
+  savePlaceWorlds(state.placeWorlds);
+}
 function saveWorlds(list) { try { localStorage.setItem('lyrivue-worlds', JSON.stringify(list)); } catch { /* 覚えなくても動く */ } }
 function saveFonts(list) { try { localStorage.setItem('lyrivue-fonts', JSON.stringify(list)); } catch { /* 覚えなくても動く */ } }
 // 文字のあとに貼る飾り：none（初期）・doodle・all
@@ -76,6 +96,8 @@ function saveEdits(e) { try { localStorage.setItem('lyrivue-edits', JSON.stringi
 function loadPickMode() { try { return localStorage.getItem('lyrivue-pick-mode') === 'edit' ? 'edit' : 'remove'; } catch { return 'remove'; } }
 function savePickMode(m) { try { localStorage.setItem('lyrivue-pick-mode', m); } catch { /* 覚えなくても動く */ } }
 
+// タップで合わせるの途中の状態（描く処理も見るので、先に作る）
+const tap = { on: false, taps: [], idx: 0 };
 const state = {
   analysis: null,
   script: null,
@@ -88,6 +110,7 @@ const state = {
   stickers: loadStickers(), // 文字のあとに貼る飾り（S のとき）
   fonts: loadFonts(),   // 使う書体（S のとき）
   worlds: loadWorlds(), // 使う世界（S のとき）
+  placeWorlds: loadPlaceWorlds(), // 旅程の行から選んだ場所ごとの世界（曲ごと）
   worldOnly: false,     // 世界のボタンを押したとき：false＝出なくする／true＝その世界だけにする
   removed: loadRemoved(), // 消した演出（director/removals.js）
   edits: loadEdits(),     // 直した行（director/edits.js）
@@ -182,6 +205,18 @@ function draw() {
   const seek = $('seek');
   if (!state.dragging) seek.value = String(t); // ドラッグ中だけは、つまみを動かさない
   markScene(t);
+  markJourney(t);
+  if (tap.on) drawTapMini(t);
+}
+function drawTapMini(t) {
+  const m = $('tap-mini');
+  const g = m.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, m.width, m.height);
+  const k = Math.min(m.width / cv.width, m.height / cv.height); // 縦でも横でも収める
+  const w = cv.width * k, h = cv.height * k;
+  g.drawImage(cv, (m.width - w) / 2, (m.height - h) / 2, w, h);
+  const d = duration();
+  $('tap-needle').style.left = `${d > 0 ? Math.min(100, Math.max(0, (t / d) * 100)) : 0}%`;
 }
 
 // 歌詞で埋める組みの出る所へ飛ぶ：一覧は台本が変わったときだけ作り直す（消した・直した演出も反映される）
@@ -211,6 +246,48 @@ for (const [id, dir] of [['fl-prev', -1], ['fl-next', 1]]) {
   });
 }
 
+// ---- 旅の帯と旅程（app/journey-view.js）：台本を作り直すたびに作り、描くたびに今の場所を光らせる ----
+let journey = { rows: [], at: -2 };
+function showJourney() {
+  const rows = journeyRows(state.script);
+  journey = { rows, at: -2 };
+  const total = duration() || rows.at(-1)?.end || 1;
+  const segs = $('band-segs');
+  segs.textContent = '';
+  for (const r of rows) {
+    const i = document.createElement('i');
+    i.style.flex = String(Math.max(0.001, r.end - r.start) / total);
+    i.style.background = r.color;
+    segs.append(i);
+  }
+  const list = $('itin');
+  list.textContent = '';
+  for (const r of rows) {
+    const li = document.createElement('li');
+    li.dataset.row = String(r.index);
+    li.tabIndex = 0;
+    const dot = document.createElement('i'); dot.style.background = r.color;
+    const tm = document.createElement('span'); tm.className = 'tm'; tm.textContent = fmtShort(r.start);
+    const pl = document.createElement('span'); pl.className = 'pl'; pl.textContent = r.name;
+    if (r.visit > 1) { const v = document.createElement('small'); v.textContent = `${r.visit} 回目`; pl.append(v); }
+    const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = r.kindLabel;
+    li.append(dot, tm, pl, kind);
+    list.append(li);
+  }
+  markJourney(now());
+}
+const fmtShort = s => { const v = Math.max(0, Math.floor(s)); return `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`; };
+function markJourney(t) {
+  const d = duration();
+  $('needle').style.left = `${d > 0 ? Math.min(100, Math.max(0, (t / d) * 100)) : 0}%`;
+  const at = rowAt(journey.rows, t);
+  if (at === journey.at) return; // 場所が変わったときだけ書き換える
+  journey.at = at;
+  [...$('band-segs').children].forEach((el, i) => el.classList.toggle('past', i <= at));
+  [...$('itin').children].forEach((el, i) => { el.classList.toggle('past', i < at); el.classList.toggle('now', i === at); });
+  $('trip-now').textContent = journey.rows[at]?.name ?? '';
+}
+
 function markScene(t) {
   const items = document.querySelectorAll('ol.scenes li');
   state.script?.scenes.forEach((s, i) => items[i]?.classList.toggle('now', t >= s.start && t < s.end));
@@ -228,7 +305,7 @@ function tick() {
     pause(); setTime(at); state.pickAt = at;
     // 止めた瞬間に見えている行で「ほかの行」の候補を作り直す（直している行を先頭に）
     state.cands = [state.sel, ...visibleLines(at).map(c => c.line).filter(x => x !== state.sel)].filter(x => x !== null);
-    if (!$('picker').hidden) showPicker();
+    if (document.body.classList.contains('picking')) showPicker();
   }
   // 画面が見えていない間（タップで合わせるなどでスクロールして隠れている）は MV を描かず、時刻の表示だけ進める。
   // iPhone では描くのに手いっぱいになり、タップの合図の処理が遅れた（2026-10-20 持ち主の録画）
@@ -277,11 +354,12 @@ function pause() {
 }
 
 // 台本を作るときの選び（「直す前を見る」も同じ選びで、その行の直しだけ外して作る）
-const scriptOpts = () => ({ seed: state.seed, mood: state.mood, tuning: state.tuning, motifs: state.motifs, ending: state.ending, unify: state.unify, stickers: state.stickers, fonts: state.fonts, worlds: state.worlds, removed: state.removed, edits: state.edits });
+const scriptOpts = () => ({ seed: state.seed, mood: state.mood, tuning: state.tuning, motifs: state.motifs, ending: state.ending, unify: state.unify, stickers: state.stickers, fonts: state.fonts, worlds: state.worlds, placeWorlds: state.placeWorlds.places, removed: state.removed, edits: state.edits });
 function rebuildScript() {
   state.compare = null;
   state.script = buildScript(state.analysis, scriptOpts());
   showSummary();
+  showJourney();
   showEdited(); // 直した行が今の歌詞に効いているかも出し直す
   if (state.pickAt !== null) showPicker(); // 作り直したら、一覧も今の台本で出し直す
   draw();
@@ -304,6 +382,7 @@ function setReady(on) {
   $('seek').disabled = !on;
   $('again').disabled = !on;
   $('tap-start').disabled = !on;
+  $('tap-fold').disabled = !on;
   $('save-analysis').disabled = !on;
   for (const b of $('route').querySelectorAll('[data-step="2"], [data-step="3"]')) b.disabled = !on;
   if (!state.exporting) $('ex-go').disabled = !on;
@@ -322,7 +401,9 @@ async function applyAnalysis(file, remember) {
     if (mine !== analysisToken) return false; // 読んでいる間に、別のものが選ばれた
     if (data?.version !== 1) throw new Error(`解析結果の版が合いません（version ${data?.version}）。この確認ページは version 1 用です`);
     if (!Array.isArray(data.lines) || !Array.isArray(data.sections)) throw new Error('解析結果の形が違います（lines と sections が必要です）');
+    closePicker(); // 別の曲を読んだら、止めた画面の板は閉じる
     state.analysis = data;
+    usePlacesFor(data); // 別の曲なら、場所ごとに選んだ世界を消す
     state.analysisName = file.name;
     state.seed = 1;
     state.clockT = 0;
@@ -336,7 +417,7 @@ async function applyAnalysis(file, remember) {
     say(`読み込みました：${file.name}（${data.lines.length}行・${data.sections.length}区切り・${fmt(data.duration)}）。${state.hasSong ? '' : '曲はまだ選ばれていません（無音で進みます）。'}`);
     return true;
   } catch (err) {
-    state.analysis = null; state.script = null;
+    state.analysis = null; state.script = null; showJourney();
     setReady(false);
     say('解析結果を読めませんでした：' + err.message, true);
     draw();
@@ -377,12 +458,17 @@ $('forget').addEventListener('click', async () => { await forgetAll(); $('forget
 // いつもの曲：ボタン 1 つで曲と解析結果を読み込む（公開ページの songs/ から。手元のサーバーには無い）
 for (const s of SONG_SET) {
   const b = document.createElement('button');
-  b.type = 'button'; b.className = 'small song'; b.dataset.id = s.id; b.textContent = s.title; b.setAttribute('aria-pressed', 'false');
+  b.type = 'button'; b.className = 'li song'; b.dataset.id = s.id; b.setAttribute('aria-pressed', 'false');
+  // 一覧の行：左に小さな四角、曲名（明朝）、右に読み込んだ印
+  const art = document.createElement('i'); art.className = 'art'; art.setAttribute('aria-hidden', 'true');
+  const name = document.createElement('span'); name.className = 'k'; name.textContent = s.title;
+  const mark = document.createElement('span'); mark.className = 'v';
+  b.append(art, name, mark);
   b.addEventListener('click', () => loadSongSet(s, b));
   $('song-set').append(b);
 }
 // ほかの解析結果に替えたら、いつもの曲の印を外す
-function unpressSet() { for (const x of $('song-set').children) x.setAttribute('aria-pressed', 'false'); }
+function unpressSet() { for (const x of $('song-set').children) { x.setAttribute('aria-pressed', 'false'); x.querySelector('.v').textContent = ''; } }
 async function loadSongSet(s, b) {
   const urls = songSetUrls(s.id, import.meta.url);
   const sayHere = (text, err) => { const m = $('set-msg'); m.textContent = text; m.classList.toggle('err', !!err); };
@@ -394,7 +480,7 @@ async function loadSongSet(s, b) {
     state.touched.analysis = true; state.touched.song = true; // 前回のファイルの自動読み込みより優先する
     applySong(new File([mp3], `${s.title}.mp3`, { type: 'audio/mpeg' }), false);
     if (await applyAnalysis(new File([json], `${s.title}-analysis.json`, { type: 'application/json' }), false)) {
-      for (const x of $('song-set').children) x.setAttribute('aria-pressed', String(x === b));
+      for (const x of $('song-set').children) { x.setAttribute('aria-pressed', String(x === b)); x.querySelector('.v').textContent = x === b ? '読み込み済み' : ''; }
       sayHere(`「${s.title}」を読み込みました。再生ボタンを押してください。`);
       $('view-msg').textContent = `「${s.title}」を読み込みました。`;
     } else sayHere(`「${s.title}」の解析結果を読めませんでした。`, true);
@@ -411,7 +497,9 @@ $('demo').addEventListener('click', () => {
   unpressSet();
   state.touched.analysis = true;
   analysisToken++; // 読み込み中の解析結果があっても、デモを優先する
+  closePicker();
   state.analysis = makeDemoAnalysis();
+  usePlacesFor(state.analysis);
   state.seed = 1;
   state.clockT = 0;
   if (state.hasSong) audio.currentTime = 0;
@@ -433,6 +521,15 @@ function setAspect(kind) {
   draw();
 }
 $('portrait').addEventListener('click', () => setAspect('portrait'));
+$('flip').addEventListener('click', () => $($('stage').dataset.aspect === 'landscape' ? 'portrait' : 'landscape').click());
+function showFlip() {
+  const wide = $('stage').dataset.aspect === 'landscape';
+  $('flip-name').textContent = wide ? '横' : '縦';
+  const r = $('flip-shape');
+  for (const [k, v] of Object.entries(wide ? { x: 2.5, y: 6, width: 17, height: 10 } : { x: 6, y: 2.5, width: 10, height: 17 })) r.setAttribute(k, String(v));
+}
+new MutationObserver(showFlip).observe($('stage'), { attributes: true, attributeFilter: ['data-aspect'] });
+showFlip();
 $('landscape').addEventListener('click', () => setAspect('landscape'));
 function setMood(m) {
   state.mood = m;
@@ -544,14 +641,21 @@ for (const t of THEMES) {
   });
   themeBox.append(b);
 }
+const customTheme = document.createElement('button');
+customTheme.type = 'button'; customTheme.className = 'theme'; customTheme.dataset.theme = 'custom';
+customTheme.append(Object.assign(document.createElement('span'), { className: 'strip' }), Object.assign(document.createElement('b'), { textContent: '自分で' }));
+themeBox.append(customTheme);
 const themeNote = document.createElement('p');
 themeNote.className = 'themes-note';
 themeBox.after(themeNote);
 function showThemes() {
   const cur = themeOf(state.worlds);
-  for (const b of themeBox.children) b.setAttribute('aria-pressed', String(b.dataset.theme === cur));
-  themeNote.textContent = cur ? '' : `いまは「作る側の道具」で選んだ ${state.worlds.length} の世界を使っています。`;
-  themeNote.hidden = !!cur;
+  for (const b of themeBox.children) b.setAttribute('aria-pressed', String(b.dataset.theme === (cur ?? 'custom')));
+  // 「自分で」の短冊：どのテーマにも当たらないときは、いま使っている世界（6 つまで）
+  const strip = customTheme.querySelector('.strip');
+  strip.textContent = '';
+  for (const id of cur ? [] : state.worlds.slice(0, 6)) { const i = document.createElement('i'); i.style.background = swatchOf(id); strip.append(i); }
+  themeNote.hidden = true; // どのテーマにも当たらないことは「自分で」が選ばれた形で見せる
 }
 
 const worldBox = $('worlds');
@@ -588,6 +692,109 @@ function showWorlds() {
   showThemes(); // 見る段のテーマも、いまの世界の選びに合わせる
 }
 $('worldMode').addEventListener('click', () => { state.worldOnly = !state.worldOnly; showWorlds(); });
+
+// ---- 使う世界を自分で選ぶ板（テーマの「自分で」）：板の中の選び（ws.draft）は「作り直す」まで使わない ----
+const ws = { draft: new Set(), energy: 'all' };
+const ENERGY_NAMES = { calm: '静か', mid: '中くらい', loud: '派手' };
+function openWorldsSheet() {
+  ws.draft = new Set(state.worlds);
+  ws.energy = 'all';
+  showWorldsSheet();
+  openSheet($('worlds-sheet'));
+}
+function showWorldsSheet() {
+  for (const b of $('ws-filter').children) b.setAttribute('aria-pressed', String(b.dataset.energy === ws.energy));
+  const grid = $('ws-grid');
+  grid.textContent = '';
+  // 絞り込み：静か・中くらい・派手は世界の性格（輪のトンネル・何もない空間は「すべて」だけに出す）
+  for (const w of WORLDS.filter(x => ws.energy === 'all' || (x.energy === ws.energy && x.light !== null))) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'ws-tile'; b.dataset.world = w.id;
+    b.setAttribute('aria-pressed', String(ws.draft.has(w.id)));
+    const sw = document.createElement('i');
+    const p = worldSwatch(w.id);
+    sw.style.background = p?.bg ?? 'var(--raise)';
+    sw.style.setProperty('--ln', p?.line ?? 'var(--faint)');
+    const name = document.createElement('span'); name.textContent = w.name;
+    b.title = ENERGY_NAMES[w.energy] ?? '';
+    b.append(sw, name);
+    b.addEventListener('click', () => {
+      if (ws.draft.has(w.id)) ws.draft.delete(w.id); else ws.draft.add(w.id);
+      showWorldsSheet();
+    });
+    grid.append(b);
+  }
+  $('ws-count').textContent = `${ws.draft.size} つ選択中`;
+  $('ws-go').textContent = ws.draft.size ? `この ${ws.draft.size} つで作り直す` : '1 つ以上選んでください';
+  $('ws-go').disabled = ws.draft.size === 0;
+}
+for (const b of $('ws-filter').children) b.addEventListener('click', () => { ws.energy = b.dataset.energy; showWorldsSheet(); });
+$('ws-go').addEventListener('click', () => {
+  if (!ws.draft.size) return;
+  state.worlds = WORLD_KEYS.filter(id => ws.draft.has(id));
+  state.worldOnly = false;
+  saveWorlds(state.worlds);
+  closeSheet($('worlds-sheet'));
+  showWorlds();
+  if (state.analysis) rebuildScript();
+});
+customTheme.addEventListener('click', openWorldsSheet);
+
+// ---- この場所を変える（旅程の行から）：その種類の区切り（A メロ・つなぎ・サビ）の世界を選ぶ ----
+const KIND_ORDER = { verse: ['calm', 'mid', 'loud'], bridge: ['mid', 'calm', 'loud'], chorus: ['loud', 'mid', 'calm'] };
+function openPlaceSheet(index) {
+  const rows = journey.rows;
+  const row = rows[index];
+  if (!row) return;
+  $('ps-title').textContent = row.changeable ? `${row.kindLabel}の場所` : 'この場所';
+  const ctx = $('ps-ctx');
+  ctx.textContent = '';
+  for (const r of rows.slice(Math.max(0, index - 2), index + 1)) {
+    const li = $('itin').children[r.index].cloneNode(true);
+    li.classList.remove('past', 'now');
+    li.classList.toggle('sel', r.index === index);
+    li.removeAttribute('tabindex');
+    ctx.append(li);
+  }
+  const list = $('ps-list');
+  list.textContent = '';
+  if (!row.changeable) {
+    $('ps-note').textContent = row.kind === 'outro' ? 'おわりの場所は「最後の世界」で決めます。' : 'この区切りは前後に合わせて決まります。';
+  } else {
+    const same = rows.filter(r => r.kind === row.kind).length;
+    $('ps-note').textContent = same > 1 ? `${row.kindLabel}は ${same} 回とも同じ場所になります。` : '';
+    const chosen = state.placeWorlds.places[row.kind];
+    const item = (label, sw, note, current, pick) => {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      if (sw) { const i = document.createElement('i'); i.style.background = sw.bg; i.style.setProperty('--ln', sw.line); b.append(i); }
+      const k = document.createElement('span'); k.className = 'k'; k.textContent = label;
+      if (current) { const c = document.createElement('small'); c.textContent = 'いま'; k.append(c); b.setAttribute('aria-current', 'true'); }
+      const v = document.createElement('span'); v.className = 'v'; v.textContent = note;
+      b.append(k, v);
+      b.addEventListener('click', () => { if (!current) pick(); });
+      li.append(b);
+      list.append(li);
+    };
+    if (chosen) item('おまかせに戻す', null, '', false, () => setPlaceWorld(row.kind, null));
+    const order = KIND_ORDER[row.kind];
+    const choices = WORLDS.filter(w => w.light !== null).sort((a, b) => order.indexOf(a.energy) - order.indexOf(b.energy));
+    for (const w of choices) item(w.name, worldSwatch(w.id), ENERGY_NAMES[w.energy] ?? '', w.id === row.world, () => setPlaceWorld(row.kind, w.id));
+  }
+  openSheet($('place-sheet'));
+  $('place-sheet').scrollTop = 0;
+}
+function setPlaceWorld(kind, id) {
+  const places = { ...state.placeWorlds.places };
+  if (id) places[kind] = id; else delete places[kind];
+  state.placeWorlds = { song: state.placeWorlds.song || songSig(state.analysis), places };
+  savePlaceWorlds(state.placeWorlds);
+  closeSheet($('place-sheet'));
+  if (state.analysis) rebuildScript();
+}
+$('itin').addEventListener('click', e => { const li = e.target.closest('li[data-row]'); if (li) openPlaceSheet(Number(li.dataset.row)); });
+$('itin').addEventListener('keydown', e => { if (e.key !== 'Enter' && e.key !== ' ') return; const li = e.target.closest('li[data-row]'); if (li) { e.preventDefault(); openPlaceSheet(Number(li.dataset.row)); } });
 $('worldAll').addEventListener('click', () => {
   state.worlds = [...WORLD_KEYS];
   saveWorlds(state.worlds);
@@ -612,15 +819,18 @@ cv.addEventListener('click', e => {
   state.emphFrom = null;
   showPicker();
   draw();
-  $('picker').scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 });
 $('picker-close').addEventListener('click', closePicker);
+$('picker-go').addEventListener('click', () => { closePicker(); play(); }); // 続きを見る：板を閉じて再生に戻る
+onSheetClose($('picker'), () => closePicker()); // 取っ手を下へ引いた・Esc
 function closePicker() {
   state.pickAt = null;
   state.sel = null;
   state.emphFrom = null;
   setPeek(null);
-  $('picker').hidden = true;
+  closeSheet($('picker'));
+  document.body.classList.remove('picking');
+  requestAnimationFrame(draw); // 映像の大きさが戻るので描き直す
 }
 function setPeek(ids, row) {
   document.querySelectorAll('.fx-row.peeking').forEach(el => el.classList.remove('peeking'));
@@ -634,13 +844,18 @@ function showPicker() {
   const t = state.pickAt;
   const list = $('picker-list');
   list.textContent = '';
-  $('picker').hidden = false;
+  if (!document.body.classList.contains('picking')) {
+    document.body.classList.add('picking'); // 映像を小さくして、板の上に全部見せる
+    window.scrollTo(0, 0);
+    requestAnimationFrame(draw);
+  }
+  openSheet($('picker'));
   const editing = state.pickMode === 'edit';
   $('mode-remove').setAttribute('aria-pressed', String(!editing));
   $('mode-edit').setAttribute('aria-pressed', String(editing));
   $('remove-panel').hidden = editing;
   $('edit-panel').hidden = !editing;
-  $('picker-title').innerHTML = editing ? `<b>${fmt(t)}</b> の行を直す` : `<b>${fmt(t)}</b> に出ている演出`;
+  $('picker-title').innerHTML = editing ? `${state.sel !== null ? `${state.sel + 1} 行目` : 'この行を直す'}<b>${fmt(t)}</b>` : `いま出ている演出<b>${fmt(t)}</b>`;
   if (editing) { showEditPanel(); return; }
   const items = effectsAt(state.script, t);
   if (!items.length) {
@@ -871,13 +1086,16 @@ function drawSelection(t) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const pad = 10 * dpr;
   const out = [a, b, d, c].map(([x, y]) => { const dx = x - cx, dy = y - cy, n = Math.hypot(dx, dy) || 1; return [x + dx / n * pad, y + dy / n * pad]; });
+  // 選んだ行の枠：白い線（明るい世界でも見えるよう、下に黒い縁）。画面の白黒の決まりに合わせる
   ctx.save();
-  ctx.strokeStyle = '#FFDF3D';
-  ctx.lineWidth = 2.5 * dpr;
-  ctx.setLineDash([9 * dpr, 6 * dpr]);
   ctx.beginPath();
   out.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
   ctx.closePath();
+  ctx.strokeStyle = 'rgba(0,0,0,.55)';
+  ctx.lineWidth = 4 * dpr;
+  ctx.stroke();
+  ctx.strokeStyle = '#ECEBE8';
+  ctx.lineWidth = 1.75 * dpr;
   ctx.stroke();
   ctx.restore();
   const r = Math.max(...out.map(([x, y]) => Math.hypot(x - cx, y - cy)));
@@ -1146,7 +1364,6 @@ function showEdited() {
     b.disabled = !live || !state.script;
     b.addEventListener('click', () => {
       goLine(i);
-      $('picker').scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     });
     box.append(b);
   }
@@ -1327,13 +1544,12 @@ cv.addEventListener('wheel', e => {
 // ---- 新しい曲で作る（app/make-song.js） ----
 const nsAI = { on: aiOnByDefault() }; // iPhone・iPad の Safari では AI が落ちるので「使わない」に（iPhone アプリは whisper.cpp で聞けるので「使う」）
 function showNsAI() {
-  $('ns-ai').setAttribute('aria-pressed', String(nsAI.on));
-  $('ns-ai').textContent = `AI で歌に合わせる：${nsAI.on ? 'オン' : 'オフ'}`;
+  $('ns-ai').setAttribute('aria-pressed', String(nsAI.on)); // 丸いスイッチ（文字は行の左に）
 }
 showNsAI();
 let nsRunning = false;
 const nsReady = () => { $('ns-go').disabled = nsRunning || !$('ns-song').files[0] || !$('ns-lyrics').value.trim(); };
-$('ns-song').addEventListener('change', nsReady);
+$('ns-song').addEventListener('change', () => { $('ns-song-name').textContent = $('ns-song').files[0]?.name ?? 'ファイルを選ぶ'; nsReady(); });
 $('ns-lyrics').addEventListener('input', nsReady);
 $('ns-ai').addEventListener('click', () => { nsAI.on = !nsAI.on; showNsAI(); });
 
@@ -1412,7 +1628,7 @@ $('ns-go').addEventListener('click', async () => {
       const sec = ((performance.now() - t0) / 1000).toFixed(0);
       msg.textContent = `できました（${sec} 秒・${analysis.lines.length} 行）。再生ボタンで見られます。` + (notes.length ? ' ' + notes.join(' ') : '');
       $('view-msg').textContent = msg.textContent; // 見る段に移ったので、そこにも出す
-      if (analysis.usedFallback) $('tap-fold').open = true; // 時刻がざっくりのときは、タップで合わせるを開いておく
+      if (analysis.usedFallback) $('tap-fold-v').textContent = 'タップで合わせる（おすすめ）'; // 時刻がざっくりのときは、合わせるのを勧める
     }
   } catch (err) {
     stopNsLog();
@@ -1434,14 +1650,14 @@ $('save-analysis').addEventListener('click', async () => {
 });
 
 // ---- タップで合わせる（analyze/retime.js） ----
-const tap = { on: false, taps: [], idx: 0 };
 const tapLines = () => state.analysis?.lines ?? [];
 function showTap() {
   const lines = tapLines();
   const cur = lines[tap.idx];
-  $('tap-now').textContent = cur ? cur.text : '最後の行まで押しました。「ここまでで合わせる」を押してください。';
-  $('tap-next').textContent = lines[tap.idx + 1] ? `つぎ：${lines[tap.idx + 1].text}` : '';
-  $('tap-count').textContent = `${Math.min(tap.idx + 1, lines.length)} / ${lines.length} 行目`;
+  $('tap-prev').textContent = lines[tap.idx - 1]?.text ?? '';
+  $('tap-now').textContent = cur ? cur.text : '最後の行まで押しました。「これで合わせる」を押してください。';
+  $('tap-next').textContent = lines[tap.idx + 1]?.text ?? '';
+  $('tap-count').textContent = `${tap.taps.length} 行 押しました`;
   $('tap-hit').disabled = !cur;
   $('tap-undo').disabled = tap.taps.length === 0;
   $('tap-done').disabled = tap.taps.length === 0;
@@ -1461,6 +1677,7 @@ function tapFrom(i) {
   tap.idx = Math.min(Math.max(0, i), Math.max(0, lines.length - 1));
   tap.taps = [];
   $('tap-from').value = String(tap.idx);
+  $('tap-from-name').textContent = `${tap.idx + 1} 行目から`;
   // 1つ前の行の頭から流す（最初の行なら曲の頭から）
   setTime(tap.idx > 0 ? Math.max(0, lines[tap.idx - 1].start) : 0);
   showTap();
@@ -1471,7 +1688,10 @@ $('tap-start').addEventListener('click', () => {
   if (!state.hasSong) { say('タップで合わせるには、曲を読み込んでください（音を聞きながら押すため）。', true); return; }
   tap.on = true;
   $('tap-box').hidden = false;
-  $('tap-start').hidden = true;
+  document.body.classList.add('tapping'); // 後ろのページを動かさない
+  closePicker();
+  $('tap-segs').innerHTML = $('band-segs').innerHTML; // 旅の帯の写し（針だけ draw で動かす）
+  $('tap-note').textContent = state.analysis.usedFallback ? '押した時刻に合わせ直します' : 'AI の時刻：押した行だけ動きます';
   fillTapFrom();
   // AI の時刻なら一部分だけ直すことが多いので、いま見ている所の行から（ざっくりの時刻なら最初の行から）
   const t0 = now();
@@ -1480,6 +1700,11 @@ $('tap-start').addEventListener('click', () => {
   $('tap-hit').focus();
 });
 $('tap-from').addEventListener('change', e => tapFrom(Number(e.target.value)));
+// 見る段の「歌とずれていたら」の行から始める。曲がないときは、そう知らせる
+$('tap-fold').addEventListener('click', () => {
+  if (state.analysis && !state.hasSong) { $('view-msg').textContent = 'タップで合わせるには、曲を読み込んでください（音を聞きながら押すため）。'; return; }
+  $('tap-start').click();
+});
 function tapHit(e) {
   if (!tap.on || !tapLines()[tap.idx]) return;
   const was = state.playing;
@@ -1505,7 +1730,7 @@ $('tap-undo').addEventListener('click', () => {
 function closeTap() {
   tap.on = false; tap.taps = [];
   $('tap-box').hidden = true;
-  $('tap-start').hidden = false;
+  document.body.classList.remove('tapping');
 }
 $('tap-cancel').addEventListener('click', () => { pause(); closeTap(); });
 $('tap-done').addEventListener('click', async () => {
@@ -1530,6 +1755,8 @@ function showEx() {
   $('ex-landscape').setAttribute('aria-pressed', String(ex.aspect === 'landscape'));
   $('ex-1080').setAttribute('aria-pressed', String(ex.quality === 1080));
   $('ex-720').setAttribute('aria-pressed', String(ex.quality === 720));
+  const spec = $('ex-spec');
+  if (spec) spec.textContent = `${ex.aspect === 'landscape' ? '横 16:9' : '縦 9:16'}　${state.hasSong ? '音つき' : '音なし'}`;
 }
 $('ex-portrait').addEventListener('click', () => { ex.aspect = 'portrait'; showEx(); });
 $('ex-landscape').addEventListener('click', () => { ex.aspect = 'landscape'; showEx(); });
@@ -1602,7 +1829,6 @@ $('ex-go').addEventListener('click', async () => {
 });
 
 // ---- 3 段の画面：1 曲と歌詞 → 2 見る → 3 動画にする（一度に 1 つの段だけ出す） ----
-const STEP_FILL = { 1: '0%', 2: '50%', 3: '100%' };
 function goStep(n) {
   const leg = document.querySelector(`.leg[data-step="${n}"]`);
   if (!leg || (n > 1 && !state.script)) return;
@@ -1613,7 +1839,7 @@ function goStep(n) {
     if (k === n) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
     b.classList.toggle('done', k < n);
   }
-  $('route').style.setProperty('--p', STEP_FILL[n]);
+  document.body.dataset.step = String(n); // 見る段では頭を出さない（映像を一番上に）
   if (n === 2) draw(); // 隠れていた画面の大きさを測り直して描く
   if (n === 3) {
     // 動画の向きは、見ていた向きから始める（変えてもよい）
@@ -1621,10 +1847,17 @@ function goStep(n) {
     showEx();
     const title = (state.hasSong ? state.songFile?.name : state.analysisName || 'デモ').replace(/(-analysis)?\.[^.]+$/i, '');
     $('ex-what').innerHTML = '';
-    $('ex-what').append(title, Object.assign(document.createElement('small'), { textContent: `${Math.floor(Math.round(duration()) / 60)} 分 ${String(Math.round(duration()) % 60).padStart(2, '0')} 秒の MV（案 ${state.seed}）` }));
+    const secs = Math.round(duration());
+    const places = new Set(journeyRows(state.script).map(r => r.world).filter(Boolean)).size;
+    const sum = Object.assign(document.createElement('small'), { textContent: `${places ? `${places} つの場所をめぐる ` : ''}${Math.floor(secs / 60)} 分 ${String(secs % 60).padStart(2, '0')} 秒（案 ${state.seed}）` });
+    $('ex-what').append(title, sum, Object.assign(document.createElement('small'), { id: 'ex-spec' }));
+    showEx();
+    // 小さな見本：見る段の今の一コマ（段に入ったとき 1 回だけ写す）
+    try { $('ex-thumb').src = cv.toDataURL('image/jpeg', 0.8); } catch { /* 写せなくても書き出せる */ }
+    $('ex-thumb').dataset.aspect = ex.aspect;
   }
-  // 段の頭が画面の上に隠れていたら、そこまで戻す
-  if ($('route').getBoundingClientRect().top < 0) $('route').scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  // 段を移ったら、画面のいちばん上から見せる（手順のタブは画面の下に固定）
+  window.scrollTo(0, 0);
 }
 for (const b of $('route').querySelectorAll('button')) b.addEventListener('click', () => goStep(Number(b.dataset.step)));
 for (const b of document.querySelectorAll('[data-go]')) b.addEventListener('click', () => goStep(Number(b.dataset.go)));

@@ -65,7 +65,7 @@ export function buildScript(analysis, opts) {
   if (opts?.mood === 'D') return applyRemovals(buildD({ seed, rng, a, lines, style, ranges, owner, tuning }), opts?.removed);
   // 直す → 消すの順（もう一案で出た演出も「全部消す」が効く）
   // 間奏（6 秒以上歌詞の無い所）は、台本ができたあとに場面として切り出す（director/interlude.js）
-  const { journey, ...base } = buildS({ seed, rng, a, lines, style, ranges, owner, tuning, motifs: opts?.motifs !== false, fonts: opts?.fonts, worlds: opts?.worlds, paperTimes: opts?.paperTimes, ending: opts?.ending, stickers: opts?.stickers, floods: opts?.floods, vessels: opts?.vessels, exits: opts?.exits, unify: opts?.unify });
+  const { journey, ...base } = buildS({ seed, rng, a, lines, style, ranges, owner, tuning, motifs: opts?.motifs !== false, fonts: opts?.fonts, worlds: opts?.worlds, placeWorlds: opts?.placeWorlds, paperTimes: opts?.paperTimes, ending: opts?.ending, stickers: opts?.stickers, floods: opts?.floods, vessels: opts?.vessels, exits: opts?.exits, unify: opts?.unify });
   // 曲の終わりの間奏は、旅の最後（journey.open の空へ抜ける／明るくする（bright）／そのまま）
   const s = addInterludes(base, a, { seed, worlds: opts?.worlds, open: journey?.open, bright: journey?.ending === 'bright' });
   return applyRemovals(applyEdits(s, opts?.edits, a, { fonts: opts?.fonts, vessels: opts?.vessels, exits: opts?.exits }), opts?.removed);
@@ -136,11 +136,11 @@ function buildD({ seed, rng, a, lines, style, ranges, owner, tuning }) {
 
 // S：空間に散らした文字（版 2）。区切りの全行を立体の空間に散らして置き、歌っている行だけ明るく打ち込む。
 // カメラは空間の中を、寄る・引く・回り込む・勢いよく寄るで動く。場面の見た目（白地・黒地、飾り）は D と同じ決め方
-function buildS({ seed, rng, a, lines, style, ranges, owner, tuning, motifs, fonts, worlds, paperTimes, ending, stickers, floods, vessels, exits, unify }) {
+function buildS({ seed, rng, a, lines, style, ranges, owner, tuning, motifs, fonts, worlds, placeWorlds, paperTimes, ending, stickers, floods, vessels, exits, unify }) {
   const intensities = stretch(ranges.map(r => sectionIntensity(a, r.start, r.end) + (CHORUS_NAME.test(r.section) && !PRE_NAME.test(r.section) ? CHORUS_BONUS : 0)));
   // 場面ごとの世界：旅の組み立て（区切りの種類ごとに場所。同じ種類は同じ場所に戻り、紙なら時間が進む。2026-10-19）。
   // 別の乱数の列なので、ほかの選びは変わらない
-  const journey = planJourney(ranges.map(r => r.section), intensities, seed, { worlds, paperTimes, ending, texts: ranges.map((_, si) => lines.filter((_, i) => owner[i] === si).map(l => l.text).join(' ')) });
+  const journey = planJourney(ranges.map(r => r.section), intensities, seed, { worlds, placeWorlds, paperTimes, ending, texts: ranges.map((_, si) => lines.filter((_, i) => owner[i] === si).map(l => l.text).join(' ')) });
   const worldIds = journey.worlds;
   const words = Array.isArray(a.words) ? a.words : [];
   // 場面ごとの行の列と、空間への置き場所（場面ごとに、同じ形のらせんの雲）
