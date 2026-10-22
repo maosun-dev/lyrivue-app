@@ -309,9 +309,14 @@ function tick() {
   }
   // 画面が見えていない間（タップで合わせるなどでスクロールして隠れている）は MV を描かず、時刻の表示だけ進める。
   // iPhone では描くのに手いっぱいになり、タップの合図の処理が遅れた（2026-10-20 持ち主の録画）
-  if (stageSeen) draw(); else showClock();
+  // タップで合わせる層は舞台を覆うだけで「見えていない」にならないので、その間は小さな映像のために 1 秒に 6 回だけ描く
+  if (tap.on) {
+    const ms = performance.now();
+    if (ms - tapDrawAt >= 166) { tapDrawAt = ms; draw(); } else showClock();
+  } else if (stageSeen) draw(); else showClock();
   if (state.playing) state.raf = requestAnimationFrame(tick);
 }
+let tapDrawAt = 0;
 // 舞台（MV の画面）が画面に見えているか。見えなくなったら描くのを休む（IntersectionObserver が無ければいつも描く）
 let stageSeen = true;
 if (typeof IntersectionObserver === 'function') {
@@ -401,9 +406,10 @@ async function applyAnalysis(file, remember) {
     if (mine !== analysisToken) return false; // 読んでいる間に、別のものが選ばれた
     if (data?.version !== 1) throw new Error(`解析結果の版が合いません（version ${data?.version}）。この確認ページは version 1 用です`);
     if (!Array.isArray(data.lines) || !Array.isArray(data.sections)) throw new Error('解析結果の形が違います（lines と sections が必要です）');
-    closePicker(); // 別の曲を読んだら、止めた画面の板は閉じる
+    closeSheets(); // 別の曲を読んだら、開いている板は閉じる
     state.analysis = data;
     usePlacesFor(data); // 別の曲なら、場所ごとに選んだ世界を消す
+    $('tap-fold-v').textContent = data.usedFallback ? 'タップで合わせる（おすすめ）' : 'タップで合わせる'; // 時刻がざっくりのときは、合わせるのを勧める
     state.analysisName = file.name;
     state.seed = 1;
     state.clockT = 0;
@@ -497,9 +503,10 @@ $('demo').addEventListener('click', () => {
   unpressSet();
   state.touched.analysis = true;
   analysisToken++; // 読み込み中の解析結果があっても、デモを優先する
-  closePicker();
+  closeSheets();
   state.analysis = makeDemoAnalysis();
   usePlacesFor(state.analysis);
+  $('tap-fold-v').textContent = 'タップで合わせる';
   state.seed = 1;
   state.clockT = 0;
   if (state.hasSong) audio.currentTime = 0;
@@ -739,6 +746,15 @@ $('ws-go').addEventListener('click', () => {
   if (state.analysis) rebuildScript();
 });
 customTheme.addEventListener('click', openWorldsSheet);
+// 使う世界・この場所を変えるの板：取っ手を下へ引く・Esc・「閉じる」で閉じる（選びは使わない）
+for (const id of ['worlds-sheet', 'place-sheet']) onSheetClose($(id), () => {});
+for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', () => closeSheet($(b.dataset.close)));
+// 段を移る・曲を読み直す・タップで合わせるを始めるときは、開いている板を全部閉じる
+function closeSheets() {
+  closePicker();
+  closeSheet($('worlds-sheet'));
+  closeSheet($('place-sheet'));
+}
 
 // ---- この場所を変える（旅程の行から）：その種類の区切り（A メロ・つなぎ・サビ）の世界を選ぶ ----
 const KIND_ORDER = { verse: ['calm', 'mid', 'loud'], bridge: ['mid', 'calm', 'loud'], chorus: ['loud', 'mid', 'calm'] };
@@ -1628,7 +1644,6 @@ $('ns-go').addEventListener('click', async () => {
       const sec = ((performance.now() - t0) / 1000).toFixed(0);
       msg.textContent = `できました（${sec} 秒・${analysis.lines.length} 行）。再生ボタンで見られます。` + (notes.length ? ' ' + notes.join(' ') : '');
       $('view-msg').textContent = msg.textContent; // 見る段に移ったので、そこにも出す
-      if (analysis.usedFallback) $('tap-fold-v').textContent = 'タップで合わせる（おすすめ）'; // 時刻がざっくりのときは、合わせるのを勧める
     }
   } catch (err) {
     stopNsLog();
@@ -1689,7 +1704,7 @@ $('tap-start').addEventListener('click', () => {
   tap.on = true;
   $('tap-box').hidden = false;
   document.body.classList.add('tapping'); // 後ろのページを動かさない
-  closePicker();
+  closeSheets();
   $('tap-segs').innerHTML = $('band-segs').innerHTML; // 旅の帯の写し（針だけ draw で動かす）
   $('tap-note').textContent = state.analysis.usedFallback ? '押した時刻に合わせ直します' : 'AI の時刻：押した行だけ動きます';
   fillTapFrom();
@@ -1832,7 +1847,7 @@ $('ex-go').addEventListener('click', async () => {
 function goStep(n) {
   const leg = document.querySelector(`.leg[data-step="${n}"]`);
   if (!leg || (n > 1 && !state.script)) return;
-  if (n !== 2) { pause(); closePicker(); }
+  if (n !== 2) { pause(); closeSheets(); }
   for (const el of document.querySelectorAll('.leg')) el.hidden = el !== leg;
   for (const b of $('route').querySelectorAll('button')) {
     const k = Number(b.dataset.step);

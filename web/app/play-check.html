@@ -174,7 +174,6 @@
   .itin li.now::before { content: ''; position: absolute; left: -10px; top: 50%; width: 2px; height: 14px; margin-top: -7px; background: var(--text); border-radius: 1px; }
   .itin li:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .peek-badge { position: absolute; top: calc(10px + env(safe-area-inset-top, 0px)); left: 50%; translate: -50% 0; background: rgba(0,0,0,.6); color: var(--text); font: 500 12px/1 var(--ui); padding: 6px 10px; border-radius: 6px; pointer-events: none; }
-  #tap-fold > summary { list-style: none; }
   .next { margin-top: 28px; }
   .stage.editing canvas { touch-action: none; } /* 行を直している間は、画面の上で指を動かしてもページが動かない（つまんで動かすため） */
   .play { flex: none; width: 52px; height: 52px; border: 0; border-radius: 50%; background: none; box-shadow: inset 0 0 0 1.5px var(--text); color: var(--text); cursor: pointer; display: grid; place-items: center; }
@@ -293,6 +292,7 @@
   .sheet.open { transform: none; }
   .sheet .grab { position: sticky; top: 0; z-index: 1; height: 26px; margin: 0 -20px; background: var(--sheet); cursor: grab; touch-action: none; }
   .sheet .grab::after { content: ''; position: absolute; top: 8px; left: 50%; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: var(--faint); }
+  .sheet-x { flex: none; border: 0; background: none; color: var(--dim); font: 500 14px/1 var(--ui); padding: 8px 0 8px 12px; cursor: pointer; }
   .sheet-foot { position: sticky; bottom: calc(-20px - env(safe-area-inset-bottom, 0px)); margin: 18px -20px calc(-20px - env(safe-area-inset-bottom, 0px)); padding: 12px 20px calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--sheet); }
   /* 止めた画面の板を開いている間は、映像を少し小さくして板の上に全部見せる */
   body.picking { --sheet-h: 50vh; }
@@ -526,7 +526,7 @@
   <!-- 使う世界を自分で選ぶ（テーマの「自分で」から。見本 app/mock/ui-mock-e.html の ④）。押すと板の中だけ変わり、「作り直す」で使う -->
   <div class="sheet" id="worlds-sheet" role="dialog" aria-labelledby="ws-title" hidden>
     <div class="grab" aria-hidden="true"></div>
-    <div class="picker-head"><h2 id="ws-title">使う世界<b id="ws-count"></b></h2></div>
+    <div class="picker-head"><h2 id="ws-title">使う世界<b id="ws-count"></b></h2><button type="button" class="sheet-x" data-close="worlds-sheet">閉じる</button></div>
     <p class="sub">選んだ中から、静かな区切り・サビ・最後に合うものを並べます</p>
     <div class="opts ws-filter" id="ws-filter" role="group" aria-label="絞り込み">
       <button type="button" data-energy="all" aria-pressed="true">すべて</button><button type="button" data-energy="calm" aria-pressed="false">静か</button><button type="button" data-energy="mid" aria-pressed="false">中くらい</button><button type="button" data-energy="loud" aria-pressed="false">派手</button>
@@ -538,7 +538,7 @@
   <!-- この場所を変える（旅程の行から。見本 app/mock/ui-mock-e.html の ⑤）：その種類の区切りの世界を選ぶ（同じ種類の区切り全部に効く） -->
   <div class="sheet" id="place-sheet" role="dialog" aria-labelledby="ps-title" hidden>
     <div class="grab" aria-hidden="true"></div>
-    <div class="picker-head"><h2 id="ps-title">この場所を変える</h2></div>
+    <div class="picker-head"><h2 id="ps-title">この場所を変える</h2><button type="button" class="sheet-x" data-close="place-sheet">閉じる</button></div>
     <ol class="itin ps-ctx" id="ps-ctx"></ol>
     <p class="sub" id="ps-note"></p>
     <ul class="ps-list" id="ps-list"></ul>

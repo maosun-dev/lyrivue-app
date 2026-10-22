@@ -175,24 +175,16 @@ export function planJourney(names, intensities, seed, opts) {
   const rng = makeRng((Number.isFinite(seed) ? Math.trunc(seed) : 0) * 5021 + 33331 + (texts.length ? textSalt(texts) : 0));
   const wanted = Array.isArray(opts?.worlds) ? WORLDS.filter(w => opts.worlds.includes(w.id)) : [];
   const pool = wanted.length ? wanted : WORLDS;
-  const pickFrom = (cands, weight) => {
+  const pickFrom = (cands, weight, draw = rng) => {
     const total = cands.reduce((s, w) => s + weight(w), 0);
-    let x = rng() * total;
+    let x = draw() * total;
     for (const w of cands) if ((x -= weight(w)) < 0) return w.id;
     return cands[cands.length - 1]?.id;
   };
   // 場所を決める（決まった順に乱数を引く）：A メロ → つなぎ → サビ。前に決めた場所は避ける（候補が尽きたら性格を問わず、それも尽きたら重ねてよい）
-  // 持ち主が旅程の行から選んだ場所の世界（2026-10-22）。A メロ・つなぎ・サビだけ受け付け、使う世界（worlds）の外でもよい。
-  // 先に使ったことにして、ほかの種類はそれを避けて選ぶ
-  const fixed = {};
-  for (const kind of ['verse', 'bridge', 'chorus']) {
-    const id = opts?.placeWorlds?.[kind];
-    if (WORLDS.some(w => w.id === id)) fixed[kind] = id;
-  }
-  const used = new Set(Object.values(fixed));
+  let used = new Set();
   const kindsAll = list.map(sectionKind);
-  const placeFor = kind => {
-    if (fixed[kind]) return fixed[kind];
+  const placeFor = (kind, draw = rng) => {
     const energy = KIND_ENERGY[kind];
     // この種類の区切りの歌詞に出てくる言葉の世界。言葉が合っても、種類に合わない派手さの世界は選ばない
     // （A メロ・つなぎは静か〜中くらい、サビは派手な世界だけ）
@@ -200,7 +192,7 @@ export function planJourney(names, intensities, seed, opts) {
     const fits = new Set(WORLD_WORDS.filter(([, re]) => re.test(said)).map(([id]) => id));
     const free = pool.filter(w => !used.has(w.id) && w.id !== OPEN_WORLD);
     const cands = free.filter(w => w.energy === energy || (fits.has(w.id) && KIND_FIT[kind].includes(w.energy)));
-    const id = pickFrom(cands.length ? cands : free.length ? free : pool, w => (w.id === 'paper' ? 2 : 1) * (fits.has(w.id) ? WORD_GAIN : 1)); // 持ち主は紙が好き
+    const id = pickFrom(cands.length ? cands : free.length ? free : pool, w => (w.id === 'paper' ? 2 : 1) * (fits.has(w.id) ? WORD_GAIN : 1), draw); // 持ち主は紙が好き
     used.add(id);
     return id;
   };
@@ -220,6 +212,33 @@ export function planJourney(names, intensities, seed, opts) {
     const cands = pool.filter(x => !avoid.has(x.id));
     worlds[i] = pickFrom(cands.length ? cands : pool, x => weightOf(x, it));
   });
+  // 持ち主が旅程の行から選んだ場所の世界（2026-10-22）。A メロ・つなぎ・サビだけ受け付け、使う世界（worlds）の外でもよい。
+  // いつもどおりに全部決めたあとで差し替える（乱数の引く順を変えないので、ほかの区切りの場所は変わらない）。
+  // 選んだ世界とぶつかった種類・となりと同じになった名前の読めない区切りだけ、別の乱数の列で選び直す
+  const fixed = {};
+  for (const kind of ['verse', 'bridge', 'chorus']) {
+    const id = opts?.placeWorlds?.[kind];
+    if (WORLDS.some(w => w.id === id)) fixed[kind] = id;
+  }
+  if (Object.keys(fixed).length) {
+    Object.assign(places, fixed);
+    const pinned = new Set(Object.values(fixed));
+    const alt = makeRng((Number.isFinite(seed) ? Math.trunc(seed) : 0) * 7919 + 977);
+    for (const kind of ['verse', 'bridge', 'chorus']) {
+      if (fixed[kind] || !pinned.has(places[kind])) continue;
+      used = new Set(Object.entries(places).filter(([k]) => k !== kind).map(([, id]) => id));
+      places[kind] = placeFor(kind, alt);
+    }
+    kinds.forEach((k, i) => { if (places[k]) worlds[i] = places[k]; });
+    worlds.forEach((w, i) => {
+      if (kinds[i] || !w || (w !== worlds[i - 1] && w !== worlds[i + 1])) return; // 名前の読めない区切りで、となりと同じになったものだけ
+      const raw = ints[i];
+      const it = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0.5;
+      const avoid = new Set([worlds[i - 1], worlds[i + 1], OPEN_WORLD].filter(Boolean));
+      const cands = pool.filter(x => !avoid.has(x.id));
+      worlds[i] = pickFrom(cands.length ? cands : pool, x => weightOf(x, it), alt);
+    });
+  }
   // 終わり（Outro）で空へ抜けないときは、直前の区切りの世界のまま（2026-10-19 持ち主「途中まではいい世界観なんだからそのまま終わる」）
   worlds.forEach((w, i) => { if (!w && kinds[i] === 'outro') worlds[i] = worlds[i - 1] ?? places.verse; });
   // 紙に戻るたびに時間が進む
