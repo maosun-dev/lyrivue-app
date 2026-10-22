@@ -137,12 +137,53 @@ function lineHits(rng, t, i, emph) {
   return out;
 }
 
+// 場所の語彙（2026-10-22 方針の紙「引き出しは多く、1 つの場所では少なく」・持ち主が案1を選んだ）：
+// 場所（世界）ごとに演出を少しだけ引いておき、その場所の中ではそれだけを繰り返す。同じ場所に戻ったら同じ語彙。
+// 語彙は場所の名前から作る別の乱数の列で引く（ほかの選びの乱数を引く回数は、そろえる・そろえないで変わらない）
+export const VOCAB_SIZE = { enter: 2, hold: 1, set: 1, kime: 1, exit: 1, flood: 2, textHit: 3 };
+const strHash = s => { let h = 17; for (const ch of String(s)) h = (h * 131 + ch.codePointAt(0)) % 2147483629; return h; };
+// 重みから n 個を重ならないように引く
+function pickN(rng, w, n) {
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const rest = Object.fromEntries(Object.entries(w).filter(([key, v]) => v > 0 && !out.includes(key)));
+    if (!Object.keys(rest).length) break;
+    out.push(weighted(rng, rest));
+  }
+  return out;
+}
+const without = (w, key) => { const c = { ...w }; delete c[key]; return c; };
+/**
+ * 場所の語彙を引く。i は場所に初めて来た場面の強さ、fontW はその場所の書体の重み（世界の好みを掛けたもの）
+ * @returns {{font:string, enter:string[], look:string[], hold:string[], set:string[], kime:string[], exit:string[], flood:string[], textHit:string[]}}
+ */
+export function pickVocab(seed, key, i, fontW) {
+  const r = makeRng((Number.isFinite(seed) ? Math.trunc(seed) : 0) * 4441 + strHash(key));
+  return {
+    font: weighted(r, fontW),
+    enter: pickN(r, enterWeights(i), VOCAB_SIZE.enter),
+    look: [...new Set([weighted(r, lookWeights(i, false)), weighted(r, lookWeights(i, true))])], // 強調語の無い行・ある行に 1 つずつ
+    hold: pickN(r, holdWeights(i), VOCAB_SIZE.hold),
+    set: ['row', ...pickN(r, without(setWeights(i, false, 8), 'row'), VOCAB_SIZE.set)], // 横並びはいつでも使える
+    kime: ['none', ...pickN(r, without(kimeWeights(i, true), 'none'), VOCAB_SIZE.kime)],
+    exit: ['none', ...pickN(r, without(exitWeights(i, true), 'none'), VOCAB_SIZE.exit)],
+    flood: pickN(r, floodWeights(i), VOCAB_SIZE.flood),
+    textHit: pickN(r, textHitWeights(i), VOCAB_SIZE.textHit),
+  };
+}
+// 重みを語彙の中だけにしぼる（語彙の中に使えるものが無ければ、元の重みのまま）
+export function within(w, list) {
+  if (!Array.isArray(list)) return w;
+  const out = Object.fromEntries(Object.entries(w).map(([k, v]) => [k, list.includes(k) ? v : 0]));
+  return Object.values(out).some(v => v > 0) ? out : w;
+}
+
 /**
  * @param {{start:number,end:number,intensity:number,tone:string,world?:string,lines:{index:number,start:number,end?:number,emph:boolean,text?:string,pos?:number[],until?:number}[]}[]} scenes 場面ごとの範囲・強さ・地の色・行（時刻順）。
  *   pos は行の置き場所（連想の小物をそのそばに置く）、until は行が見えなくなる時刻、end は歌い終わり（器の行を静かにする間）
  * @param {number[]} beats 拍の時刻
  * @param {number} seed
- * @param {{motifs?:boolean, fonts?:string[], stickers?:'none'|'doodle'|'all', floods?:boolean, vessels?:boolean, exits?:boolean}} [opts] motifs が false なら言葉の演出を入れない。fonts は使ってよい書体（無い・空なら全部）。
+ * @param {{motifs?:boolean, fonts?:string[], stickers?:'none'|'doodle'|'all', floods?:boolean, vessels?:boolean, exits?:boolean, unify?:boolean}} [opts] motifs が false なら言葉の演出を入れない。unify が false なら場所の語彙でそろえない（初期はそろえる）。fonts は使ってよい書体（無い・空なら全部）。
  *   floods が false なら歌詞で画面を埋める組みを入れない（初期は入れる）。vessels が true のときだけ文字を載せる器を入れる（2026-10-19 方針で初期オフ）。
  *   stickers は文字のあとに貼る飾り（none＝貼らない・既定／doodle＝手描きの記号だけ／all＝シール・紙ものも）
  * @returns {{lines:Map<number,{enter:string,look:string,hold:string,font:string,set:string,exit:string,kime:string,sticker?:string,stickerSeed?:number,flood?:string,vessels?:string[]}>, cuts:number[], scenes:{hits:{t:number,kind:string,amp:number,dur:number}[], tones:{t:number,tone:string}[],
@@ -182,6 +223,8 @@ export function planEffects(scenes, beats, seed, opts) {
   const fontW = i => { const w = fontWeights(i); if (allowed.length) for (const k of FONTS) if (!allowed.includes(k)) w[k] = 0; return w; };
   let prevFont;
   let prevSet;
+  const unify = opts?.unify !== false;
+  const vocabs = new Map(); // 場所の名前 → 語彙
   const lines = new Map();
   const beatList = (Array.isArray(beats) ? beats : []).filter(Number.isFinite);
   let prevEnter;
@@ -203,19 +246,27 @@ export function planEffects(scenes, beats, seed, opts) {
     const likes = (w, pref, d) => { if (world?.palette) for (const k of Object.keys(w)) w[k] *= pref[k] ?? d; return w; };
     const sceneFontW = () => likes(fontW(i), world?.fonts ?? {}, 0.4);
     // 場面の書体を1つ決め、ときどき別の書体の行を混ぜる（同じ書体が2場面続かない）
-    const mainFont = weighted(typeRng, sceneFontW(), prevFont);
+    const drawnFont = weighted(typeRng, sceneFontW(), prevFont);
+    // 場所の語彙（同じ場所に戻ったら同じ）。世界の無い場面は場面ごと
+    const placeKey = sc.world ?? `scene${si}`;
+    if (unify && !vocabs.has(placeKey)) vocabs.set(placeKey, pickVocab(seed, placeKey, i, sceneFontW()));
+    const V = unify ? vocabs.get(placeKey) : null;
+    const mainFont = V ? V.font : drawnFont;
     prevFont = mainFont;
+    const W = (w, list) => (V ? within(w, list) : w);
+    const avoid = prev => (V ? undefined : prev); // そろえるときは、同じものが続いてよい
     (sc.lines ?? []).forEach((l, k) => {
-      prevEnter = weighted(rng, enterWeights(i), prevEnter);
-      prevLook = weighted(rng, lookWeights(i, l.emph), prevLook);
-      prevHold = weighted(rng, holdWeights(i), prevHold);
-      const font = typeRng() < FONT_SWAP ? weighted(typeRng, sceneFontW(), mainFont) : mainFont;
+      prevEnter = weighted(rng, W(enterWeights(i), V?.enter), avoid(prevEnter));
+      prevLook = weighted(rng, W(lookWeights(i, l.emph), V?.look), avoid(prevLook));
+      prevHold = weighted(rng, W(holdWeights(i), V?.hold), avoid(prevHold));
+      const swapped = typeRng() < FONT_SWAP ? weighted(typeRng, sceneFontW(), mainFont) : mainFont;
+      const font = V ? mainFont : swapped; // そろえるときは、場所の書体だけ
       const n = Array.from(String(l.text ?? '')).length;
       // 横並びは続いてよい。ほかの組み方は2行続かない
-      prevSet = weighted(typeRng, setWeights(i, l.emph, n, isLatinLine(l.text)), prevSet === 'row' ? undefined : prevSet);
-      const exit = weighted(textRng, exitWeights(i, opts?.exits === true), prevExit); // オフでも乱数は同じく 1 回引く（ほかの選びが変わらない）
+      prevSet = weighted(typeRng, W(setWeights(i, l.emph, n, isLatinLine(l.text)), V?.set), prevSet === 'row' ? undefined : prevSet);
+      const exit = weighted(textRng, W(exitWeights(i, opts?.exits === true), V?.exit), avoid(prevExit)); // オフでも乱数は同じく 1 回引く（ほかの選びが変わらない）
       if (exit !== 'none') prevExit = exit;
-      const kime = weighted(textRng, kimeWeights(i, l.emph), prevKime);
+      const kime = weighted(textRng, W(kimeWeights(i, l.emph), V?.kime), avoid(prevKime));
       if (kime !== 'none') prevKime = kime;
       const lf = { enter: prevEnter, look: prevLook, hold: prevHold, font, set: prevSet, exit, kime };
       // 貼る飾り：4 行に 1 回くらい（強い場面ほど多い）。同じ飾りは 2 回続かない
@@ -227,7 +278,7 @@ export function planEffects(scenes, beats, seed, opts) {
       // 歌詞で画面を埋める組み：強調語のある行・強い場面ほど多い。直近に出た模様は選ばない。敷き詰めの組みの行には入れない。
       // 乱数は入れるかどうかに関係なく同じ数だけ引く
       const fRoll = floodRng();
-      const fPick = weighted(floodRng, floodWeights(i, recentFloods));
+      const fPick = weighted(floodRng, V ? within(floodWeights(i), V.flood) : floodWeights(i, recentFloods)); // そろえるときは、同じ模様を繰り返す
       if (floodOn && prevSet !== 'fill' && !prevHeavy && fRoll < floodRate(i, l.emph)) {
         lf.flood = fPick;
         recentFloods.push(fPick);
@@ -245,7 +296,7 @@ export function planEffects(scenes, beats, seed, opts) {
       lines.set(l.index, lf);
       // 文字に掛かる一瞬：行の頭に（強い場面ほどよく入る）。乱数は入れるかどうかに関係なく同じ数だけ引く
       const thOn = textRng() < 0.2 + 0.55 * i;
-      const th = weighted(textRng, textHitWeights(i), prevTextHit);
+      const th = weighted(textRng, W(textHitWeights(i), V?.textHit), avoid(prevTextHit));
       const thAmp = 0.7 + 0.3 * textRng();
       if (!Number.isFinite(l.start)) return;
       if (thOn) { prevTextHit = th; hits.push({ t: l.start, kind: th, amp: thAmp, dur: TEXT_HIT_SECONDS[th] }); }

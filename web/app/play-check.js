@@ -67,6 +67,8 @@ function saveMotifs(on) { try { localStorage.setItem('lyrivue-motifs', on ? 'on'
 // 最後の世界：bright（同じ世界の明るい色・初期）か stay（そのまま）
 function loadEnding() { try { return localStorage.getItem('lyrivue-ending') === 'stay' ? 'stay' : 'bright'; } catch { return 'bright'; } }
 function saveEnding(v) { try { localStorage.setItem('lyrivue-ending', v); } catch { /* 覚えなくても動く */ } }
+function loadUnify() { try { return localStorage.getItem('lyrivue-unify') !== 'off'; } catch { return true; } }
+function saveUnify(v) { try { localStorage.setItem('lyrivue-unify', v ? 'on' : 'off'); } catch { /* 覚えなくても動く */ } }
 function loadRemoved() { try { return normalizeRemoved(JSON.parse(localStorage.getItem('lyrivue-removed') ?? 'null')); } catch { return normalizeRemoved(null); } }
 function saveRemoved(r) { try { localStorage.setItem('lyrivue-removed', JSON.stringify(r)); } catch { /* 覚えなくても動く */ } }
 function loadEdits() { try { return normalizeEdits(JSON.parse(localStorage.getItem('lyrivue-edits') ?? 'null')); } catch { return normalizeEdits(null); } }
@@ -82,6 +84,7 @@ const state = {
   tuning: loadTuning(), // 調整パネルの値
   motifs: loadMotifs(), // 言葉の演出（月・雨・時計などの小物）を入れるか（S のとき）
   ending: loadEnding(), // 最後の世界（S のとき）
+  unify: loadUnify(), // 場所の中の演出をそろえる（S のとき）
   stickers: loadStickers(), // 文字のあとに貼る飾り（S のとき）
   fonts: loadFonts(),   // 使う書体（S のとき）
   worlds: loadWorlds(), // 使う世界（S のとき）
@@ -274,7 +277,7 @@ function pause() {
 }
 
 // 台本を作るときの選び（「直す前を見る」も同じ選びで、その行の直しだけ外して作る）
-const scriptOpts = () => ({ seed: state.seed, mood: state.mood, tuning: state.tuning, motifs: state.motifs, ending: state.ending, stickers: state.stickers, fonts: state.fonts, worlds: state.worlds, removed: state.removed, edits: state.edits });
+const scriptOpts = () => ({ seed: state.seed, mood: state.mood, tuning: state.tuning, motifs: state.motifs, ending: state.ending, unify: state.unify, stickers: state.stickers, fonts: state.fonts, worlds: state.worlds, removed: state.removed, edits: state.edits });
 function rebuildScript() {
   state.compare = null;
   state.script = buildScript(state.analysis, scriptOpts());
@@ -462,6 +465,18 @@ for (const [id, v] of [['ending-bright', 'bright'], ['ending-stay', 'stay']]) $(
   state.ending = v;
   saveEnding(state.ending);
   showEnding();
+  if (state.analysis) rebuildScript();
+});
+function showUnify() {
+  $('unify-on').setAttribute('aria-pressed', String(state.unify));
+  $('unify-off').setAttribute('aria-pressed', String(!state.unify));
+}
+showUnify();
+for (const [id, v] of [['unify-on', true], ['unify-off', false]]) $(id).addEventListener('click', () => {
+  if (state.unify === v) return;
+  state.unify = v;
+  saveUnify(v);
+  showUnify();
   if (state.analysis) rebuildScript();
 });
 function showStickers() {

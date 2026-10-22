@@ -28,9 +28,10 @@ const PRE_NAME = /pre|プレ|Aメロ|Bメロ/i; // Pre-Chorus（サビの前）�
 
 /**
  * @param {import('../analyze/types.js').AnalysisResult} analysis
- * @param {{seed?:number, mood?:'B'|'D'|'S', tuning?:Object<string,number>, motifs?:boolean, fonts?:string[], worlds?:string[], stickers?:'none'|'doodle'|'all', floods?:boolean, vessels?:boolean, exits?:boolean, ending?:'bright'|'stay'|'sky', paperTimes?:string[], removed?:{kinds?:string[],items?:string[]}, edits?:Object}} [opts] mood の既定は 'S'（空間に散らした文字・あちこち動くカメラ）。'D' は廊下に並べた重ねる文字、'B' は跳ねる文字。tuning は見た目の細かい値（無ければ初期値）。motifs が false なら S に言葉の演出（月・雨など）を入れない。fonts は S で使ってよい書体（無い・空なら全部）。worlds は S で使ってよい世界（director/worlds.js。無い・空なら全部）。stickers は S で文字のあとに貼る飾り（none＝貼らない・既定／doodle＝手描きの記号だけ／all＝全部）。floods が false なら S に歌詞で画面を埋める組みを入れない（初期は入れる）。vessels が true のときだけ S に文字を載せる器を入れる（2026-10-19 方針で初期オフ）。ending は S の最後の世界（bright＝同じ世界の夜明けの色・初期／stay＝そのまま／sky＝空と線画へ抜ける）。paperTimes は紙に戻るたびに使う時間の順。exits が true のときだけ S に文字の消え方を入れる（2026-10-19 持ち主の判断で初期オフ）。
+ * @param {{seed?:number, mood?:'B'|'D'|'S', tuning?:Object<string,number>, motifs?:boolean, fonts?:string[], worlds?:string[], stickers?:'none'|'doodle'|'all', floods?:boolean, vessels?:boolean, exits?:boolean, ending?:'bright'|'stay'|'sky', paperTimes?:string[], removed?:{kinds?:string[],items?:string[]}, edits?:Object, unify?:boolean}} [opts] mood の既定は 'S'（空間に散らした文字・あちこち動くカメラ）。'D' は廊下に並べた重ねる文字、'B' は跳ねる文字。tuning は見た目の細かい値（無ければ初期値）。motifs が false なら S に言葉の演出（月・雨など）を入れない。fonts は S で使ってよい書体（無い・空なら全部）。worlds は S で使ってよい世界（director/worlds.js。無い・空なら全部）。stickers は S で文字のあとに貼る飾り（none＝貼らない・既定／doodle＝手描きの記号だけ／all＝全部）。floods が false なら S に歌詞で画面を埋める組みを入れない（初期は入れる）。vessels が true のときだけ S に文字を載せる器を入れる（2026-10-19 方針で初期オフ）。ending は S の最後の世界（bright＝同じ世界の夜明けの色・初期／stay＝そのまま／sky＝空と線画へ抜ける）。paperTimes は紙に戻るたびに使う時間の順。exits が true のときだけ S に文字の消え方を入れる（2026-10-19 持ち主の判断で初期オフ）。
  *   removed は持ち主が消した演出（director/removals.js。台本を作ったあとに抜くので、カメラや置き場所は変わらない）。
  *   edits は持ち主が直した行（director/edits.js。S のときだけ。消すより先に掛ける）
+ *   unify が false なら、場所（世界）ごとの演出の語彙でそろえない（初期はそろえる。director/effects.js の pickVocab）
  * @returns {import('./types.js').Script}
  */
 export function buildScript(analysis, opts) {
@@ -64,7 +65,7 @@ export function buildScript(analysis, opts) {
   if (opts?.mood === 'D') return applyRemovals(buildD({ seed, rng, a, lines, style, ranges, owner, tuning }), opts?.removed);
   // 直す → 消すの順（もう一案で出た演出も「全部消す」が効く）
   // 間奏（6 秒以上歌詞の無い所）は、台本ができたあとに場面として切り出す（director/interlude.js）
-  const { journey, ...base } = buildS({ seed, rng, a, lines, style, ranges, owner, tuning, motifs: opts?.motifs !== false, fonts: opts?.fonts, worlds: opts?.worlds, paperTimes: opts?.paperTimes, ending: opts?.ending, stickers: opts?.stickers, floods: opts?.floods, vessels: opts?.vessels, exits: opts?.exits });
+  const { journey, ...base } = buildS({ seed, rng, a, lines, style, ranges, owner, tuning, motifs: opts?.motifs !== false, fonts: opts?.fonts, worlds: opts?.worlds, paperTimes: opts?.paperTimes, ending: opts?.ending, stickers: opts?.stickers, floods: opts?.floods, vessels: opts?.vessels, exits: opts?.exits, unify: opts?.unify });
   // 曲の終わりの間奏は、旅の最後（journey.open の空へ抜ける／明るくする（bright）／そのまま）
   const s = addInterludes(base, a, { seed, worlds: opts?.worlds, open: journey?.open, bright: journey?.ending === 'bright' });
   return applyRemovals(applyEdits(s, opts?.edits, a, { fonts: opts?.fonts, vessels: opts?.vessels, exits: opts?.exits }), opts?.removed);
@@ -135,7 +136,7 @@ function buildD({ seed, rng, a, lines, style, ranges, owner, tuning }) {
 
 // S：空間に散らした文字（版 2）。区切りの全行を立体の空間に散らして置き、歌っている行だけ明るく打ち込む。
 // カメラは空間の中を、寄る・引く・回り込む・勢いよく寄るで動く。場面の見た目（白地・黒地、飾り）は D と同じ決め方
-function buildS({ seed, rng, a, lines, style, ranges, owner, tuning, motifs, fonts, worlds, paperTimes, ending, stickers, floods, vessels, exits }) {
+function buildS({ seed, rng, a, lines, style, ranges, owner, tuning, motifs, fonts, worlds, paperTimes, ending, stickers, floods, vessels, exits, unify }) {
   const intensities = stretch(ranges.map(r => sectionIntensity(a, r.start, r.end) + (CHORUS_NAME.test(r.section) && !PRE_NAME.test(r.section) ? CHORUS_BONUS : 0)));
   // 場面ごとの世界：旅の組み立て（区切りの種類ごとに場所。同じ種類は同じ場所に戻り、紙なら時間が進む。2026-10-19）。
   // 別の乱数の列なので、ほかの選びは変わらない
@@ -155,7 +156,7 @@ function buildS({ seed, rng, a, lines, style, ranges, owner, tuning, motifs, fon
   const fx = planEffects(ranges.map((r, si) => ({
     start: r.start, end: r.end, intensity: intensities[si], tone: intensities[si] >= PAPER_FROM ? 'paper' : 'ink', world: worldIds[si],
     lines: groups[si].map(({ l, i }, k) => ({ index: i, start: l.start, end: Math.max(l.end, l.start + MIN_LINE_SECONDS), emph: !!emphasisSpan(l.text, words), text: l.text, pos: places[si][k].pos, until: lineWindow(groups[si], k, r, tuning).to })),
-  })), a.beats, seed, { motifs, fonts, stickers, floods, vessels, exits });
+  })), a.beats, seed, { motifs, fonts, stickers, floods, vessels, exits, unify });
   cutCamera(keys, fx.cuts);
   fx.scenes.forEach((sf, si) => placeProps(sf.back, keys, groups[si], places[si]));
   const scenes = ranges.map((r, si) => {
